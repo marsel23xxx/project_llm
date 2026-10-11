@@ -26,11 +26,24 @@ class Dataset(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     original_filename: Mapped[str] = mapped_column(String(255))
+    # "table": CSV/XLSX loaded into DuckDB. "document": PDF text stored as chunks (duckdb_path is empty).
+    kind: Mapped[str] = mapped_column(String(16), default="table", server_default="table")
     duckdb_path: Mapped[str] = mapped_column(String(512))
+    # Rows for a table, pages for a document.
     row_count: Mapped[int]
     schema_json: Mapped[list] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class DocumentChunk(Base):
+    __tablename__ = "document_chunks"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    dataset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), index=True)
+    page: Mapped[int]
+    position: Mapped[int]
+    text: Mapped[str] = mapped_column(Text)
 
 
 class ChatSession(Base):

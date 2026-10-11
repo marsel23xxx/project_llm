@@ -8,7 +8,13 @@ export type Dataset = {
   expires_at: string;
 };
 
-export type ChatSession = { id: string; dataset_id: string; title: string; created_at: string };
+export type ChatSession = {
+  id: string;
+  dataset_id: string;
+  title: string;
+  kind: "table" | "document";
+  created_at: string;
+};
 
 export type ChartSpec = { kind: "bar" | "line"; x: string; y: string[]; dashed?: string[] };
 
@@ -21,7 +27,7 @@ export type TableEvent = {
 };
 
 export type AgentEvent =
-  | { type: "intent"; value: "sql" | "python" | "sentiment" | "forecast" | "profile" | "chat" }
+  | { type: "intent"; value: "sql" | "python" | "sentiment" | "forecast" | "profile" | "doc_qa" | "doc_summary" | "chat" }
   | { type: "code"; language: "sql" | "python"; value: string; attempt: number }
   | { type: "retry"; error: string }
   | TableEvent
@@ -29,6 +35,7 @@ export type AgentEvent =
   | { type: "stdout"; value: string }
   | { type: "chart"; spec: ChartSpec }
   | { type: "samples"; items: { label: string; text: string }[] }
+  | { type: "sources"; items: { page: number; text: string }[] }
   | { type: "answer"; text: string }
   | { type: "error"; message: string }
   | { type: "done"; latency_ms: number; message_id?: string };

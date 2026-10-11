@@ -15,6 +15,13 @@ type UiMessage = {
   messageId?: string;
 };
 
+const DOCUMENT_SUGGESTIONS = [
+  "Ringkas dokumen ini",
+  "Apa poin-poin pentingnya?",
+  "Dokumen ini ditujukan untuk siapa?",
+  "Adakah tanggal atau tenggat yang disebutkan?",
+];
+
 const SUGGESTIONS = [
   "Ringkas isi dataset ini",
   "Tampilkan tren per bulan",
@@ -70,6 +77,8 @@ export default function Home() {
   useEffect(() => {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
+
+  const activeKind = sessions.find((s) => s.id === activeId)?.kind ?? "table";
 
   async function upload(file: File) {
     setUploading(true);
@@ -159,7 +168,7 @@ export default function Home() {
           <input
             ref={fileInput}
             type="file"
-            accept=".csv,.xlsx"
+            accept=".csv,.xlsx,.pdf"
             className="hidden"
             onChange={(e) => e.target.files?.[0] && upload(e.target.files[0])}
           />
@@ -168,7 +177,7 @@ export default function Home() {
             disabled={uploading}
             className="mt-4 w-full rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white disabled:opacity-60"
           >
-            {uploading ? "Mengunggah..." : "Unggah CSV / Excel"}
+            {uploading ? "Mengunggah..." : "Unggah CSV / Excel / PDF"}
           </button>
           <p className="mt-2 text-xs text-muted">Maks 50 MB. Data dihapus otomatis setelah 24 jam.</p>
         </div>
@@ -214,7 +223,7 @@ export default function Home() {
               <div className="py-24 text-center">
                 <h2 className="text-lg font-semibold">Mulai dengan mengunggah data</h2>
                 <p className="mt-2 text-sm text-muted">
-                  Unggah file CSV atau Excel, lalu tanyakan apa saja dalam Bahasa Indonesia.
+                  Unggah file CSV, Excel, atau PDF, lalu tanyakan apa saja dalam Bahasa Indonesia.
                 </p>
                 <button
                   onClick={() => fileInput.current?.click()}
@@ -227,7 +236,7 @@ export default function Home() {
 
             {activeId && messages.length === 0 && (
               <div className="grid gap-2 sm:grid-cols-2">
-                {SUGGESTIONS.map((q) => (
+                {(activeKind === "document" ? DOCUMENT_SUGGESTIONS : SUGGESTIONS).map((q) => (
                   <button
                     key={q}
                     onClick={() => ask(q)}
@@ -273,7 +282,13 @@ export default function Home() {
               onChange={(e) => setInput(e.target.value)}
               disabled={!activeId || busy}
               maxLength={2000}
-              placeholder={activeId ? "Tanyakan sesuatu tentang data Anda..." : "Unggah data terlebih dahulu"}
+              placeholder={
+                !activeId
+                  ? "Unggah data terlebih dahulu"
+                  : activeKind === "document"
+                    ? "Tanyakan sesuatu tentang dokumen ini..."
+                    : "Tanyakan sesuatu tentang data Anda..."
+              }
               aria-label="Pertanyaan"
               className="flex-1 rounded-lg border border-border bg-background px-3 py-2 text-sm outline-none focus:border-accent disabled:opacity-60"
             />

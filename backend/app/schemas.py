@@ -44,6 +44,7 @@ class DatasetOut(BaseModel):
 
     id: uuid.UUID
     original_filename: str
+    kind: str
     row_count: int
     created_at: datetime
     expires_at: datetime
@@ -63,6 +64,7 @@ class SessionOut(BaseModel):
     id: uuid.UUID
     dataset_id: uuid.UUID
     title: str
+    kind: str = "table"
     created_at: datetime
 
 

@@ -12,6 +12,8 @@ const INTENT_LABEL = {
   sentiment: "Analisis Sentimen",
   forecast: "Prediksi",
   profile: "Ringkasan Dataset",
+  doc_qa: "Tanya Dokumen",
+  doc_summary: "Ringkasan Dokumen",
   chat: "Obrolan",
 } as const;
 
@@ -22,6 +24,8 @@ function progressLabel(steps: AgentEvent[]): string {
     case "intent":
       if (last.value === "chat") return "Menyusun jawaban...";
       if (last.value === "forecast") return "Melatih model prediksi dan menguji akurasinya...";
+      if (last.value === "doc_qa") return "Mencari bagian dokumen yang relevan...";
+      if (last.value === "doc_summary") return "Membaca dokumen...";
       return last.value === "sentiment" ? "Membaca dan menilai teks..." : "Menulis kode analisis...";
     case "code":
       return "Menjalankan kode...";
@@ -58,6 +62,7 @@ export function AssistantMessage({ steps, pending, messageId }: Props) {
   const chart = steps.findLast((s) => s.type === "chart");
   const value = steps.findLast((s) => s.type === "value");
   const samples = steps.findLast((s) => s.type === "samples");
+  const sources = steps.findLast((s) => s.type === "sources");
   const process = steps.filter((s) => s.type === "code" || s.type === "retry" || s.type === "stdout");
   const attempts = process.filter((s) => s.type === "code").length;
 
@@ -106,6 +111,21 @@ export function AssistantMessage({ steps, pending, messageId }: Props) {
             ))}
           </ul>
         </div>
+      )}
+      {sources && sources.items.length > 0 && (
+        <details className="rounded-lg border border-border text-sm">
+          <summary className="cursor-pointer px-3 py-2 text-muted">
+            Sumber: halaman {[...new Set(sources.items.map((s) => s.page))].join(", ")}
+          </summary>
+          <ul className="space-y-2 border-t border-border p-3">
+            {sources.items.map((item, i) => (
+              <li key={i} className="text-xs leading-relaxed">
+                <span className="mr-2 rounded-full border border-border px-2 py-0.5 text-muted">hal. {item.page}</span>
+                {item.text}
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
       {value && (
         <pre className="overflow-x-auto rounded-lg border border-border bg-background p-3 text-xs">

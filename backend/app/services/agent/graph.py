@@ -10,6 +10,8 @@
            ├─ profile ──► describe_dataset (column profile, no LLM; chosen by a rule)
            └─ chat ─────► answer_chat
 
+A PDF session skips the table paths: route ─► answer_document (retrieve passages, answer with page citations).
+
 `route` asks the trained intent classifier first and only calls the LLM when it is unsure.
 """
 
@@ -26,10 +28,12 @@ from langgraph.graph import END, START, StateGraph
 
 from app.core.config import Settings
 from app.ml.models import MLModels
+from app.ml.text import normalize
 from app.services.agent import prompts
 from app.services.agent.charts import suggest_chart
 from app.services.agent import forecast as forecasting
 from app.services.agent import profile as profiling
+from app.services import documents
 from app.services.agent.executor import ExecutionError, QueryResult, run_sql
 from app.services.agent.guardrail import GuardrailError, validate_sql
 from app.services.agent.sandbox_client import run_python
@@ -38,9 +42,13 @@ from app.services.agent.sentiment import analyze as analyze_text_sentiment
 from app.services.llm.base import LLMError, LLMResult
 from app.services.llm.router import LLMRouter
 
-Intent = Literal["sql", "python", "sentiment", "forecast", "profile", "chat"]
+Intent = Literal["sql", "python", "sentiment", "forecast", "profile", "doc_qa", "doc_summary", "chat"]
 SUMMARY_ROWS = 20
 
+DOC_SUMMARY_QUESTION = re.compile(
+    r"\b(ringkas|ringkasan|rangkum|rangkuman|intisari|inti|garis besar|poin penting|poin utama|kesimpulan)\b"
+    r"|\b(dokumen|file|pdf) (ini|nya)? ?(tentang|membahas|berisi|isinya) apa\b|\btentang apa\b"
+)
 _CODE_BLOCK = re.compile(r"```(?:sql|python|py)?\s*\n?(.*?)```", re.DOTALL | re.IGNORECASE)
 
 
@@ -55,6 +63,11 @@ class AgentState(TypedDict, total=False):
     result: dict | None
     chart: dict | None
     samples: list[dict]
+    # Document sessions (PDF): the stored chunks, and what was retrieved for this answer.
+    doc_chunks: list[dict] | None
+    history: str
+    previous_question: str
+    sources: list[dict]
     answer: str
     usage: Annotated[list[dict], operator.add]
 
@@ -106,6 +119,14 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
     sentiment_model = ml.sentiment if ml else None
 
     async def route(state: AgentState) -> dict:
+        if state.get("doc_chunks") is not None:
+            # A document has no table to query: either small talk, a summary, or a question about its text.
+            if intent_model:
+                pred = intent_model.predict(state["question"])
+                if pred.label == "chat" and pred.confidence >= intent_model.threshold:
+                    return {"intent": "chat", "attempts": 0, "usage": []}
+            intent = "doc_summary" if DOC_SUMMARY_QUESTION.search(normalize(state["question"])) else "doc_qa"
+            return {"intent": intent, "attempts": 0, "usage": [{"step": "route", "provider": "rule", "model": "document"}]}
         if profiling.is_overview_question(state["question"]):
             return {"intent": "profile", "attempts": 0, "usage": [{"step": "route", "provider": "rule", "model": "overview"}]}
         kind = "simple"
@@ -195,6 +216,42 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
         finished["result"]["stdout"] = note
         return {**finished, "chart": chart, "answer": answer}
 
+    async def answer_document(state: AgentState) -> dict:
+        chunks = [documents.Chunk(**c) for c in state["doc_chunks"]]
+        question = state["question"]
+        if state["intent"] == "doc_summary":
+            picked, sampled = documents.summary_excerpts(chunks)
+            if sampled:
+                note = (
+                    f"Dokumen {chunks[-1].page} halaman terlalu panjang untuk dibaca sekaligus; ringkasan dibuat dari "
+                    f"{len(picked)} cuplikan yang tersebar dari halaman {picked[0].page} sampai {picked[-1].page}."
+                )
+            else:
+                note = f"Ringkasan dibuat dari seluruh dokumen ({chunks[-1].page} halaman)."
+            system = prompts.DOC_SUMMARY_SYSTEM
+            history = ""
+        else:
+            # "jelaskan lebih detail" alone retrieves nothing useful; borrow the previous question's words.
+            query = question if len(question.split()) >= 4 else f"{state.get('previous_question', '')} {question}"
+            hits = await asyncio.to_thread(lambda: documents.Retriever(chunks).search(query))
+            if not hits:
+                return {"answer": "Saya tidak menemukan bagian dokumen yang berkaitan dengan pertanyaan itu.", "sources": []}
+            picked, note = [chunk for chunk, _ in hits], ""
+            system = prompts.DOC_QA_SYSTEM
+            history = state.get("history", "")
+
+        request = prompts.document_request(question, [(c.page, c.text) for c in picked], history)
+        out = await llm.complete("complex", system, [{"role": "user", "content": request}], 600)
+        pages = sorted({c.page for c in picked})
+        # Shown strongest first, the reverse of the order the model reads them in.
+        sources = [{"page": c.page, "text": c.text[:400]} for c in reversed(picked)] if state["intent"] == "doc_qa" else []
+        return {
+            "answer": out.text.strip(),
+            "sources": sources,
+            "result": {"columns": [], "types": [], "rows": [], "truncated": False, "stdout": note, "value": None, "type": "table"},
+            "usage": _usage(out, state["intent"]) + [{"step": "retrieve", "pages": pages}],
+        }
+
     async def describe_dataset(state: AgentState) -> dict:
         table, answer = await asyncio.to_thread(profiling.describe, Path(state["db_path"]))
         return {**_finish(table), "chart": None, "answer": answer}
@@ -232,6 +289,7 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
     graph.add_node("analyze_sentiment", analyze_sentiment)
     graph.add_node("run_forecast", run_forecast)
     graph.add_node("describe_dataset", describe_dataset)
+    graph.add_node("answer_document", answer_document)
     graph.add_node("answer_chat", answer_chat)
     graph.add_node("fail", fail)
 
@@ -239,7 +297,8 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
     graph.add_conditional_edges(
         "route",
         lambda s: s["intent"],
-        {"sql": "generate_sql", "python": "generate_python", "sentiment": "analyze_sentiment", "forecast": "run_forecast", "profile": "describe_dataset", "chat": "answer_chat"},
+        {"sql": "generate_sql", "python": "generate_python", "sentiment": "analyze_sentiment", "forecast": "run_forecast", "profile": "describe_dataset", "chat": "answer_chat",
+         "doc_qa": "answer_document", "doc_summary": "answer_document"},
     )
     graph.add_conditional_edges(
         "analyze_sentiment", lambda s: END if s.get("answer") else "summarize", ["summarize", END]
@@ -250,7 +309,7 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
     graph.add_conditional_edges(
         "execute_python", after_execute("generate_python"), ["generate_python", "summarize", "fail"]
     )
-    for terminal in ("summarize", "answer_chat", "fail", "run_forecast", "describe_dataset"):
+    for terminal in ("summarize", "answer_chat", "fail", "run_forecast", "describe_dataset", "answer_document"):
         graph.add_edge(terminal, END)
     return graph.compile()
 
@@ -261,7 +320,7 @@ def _events_for(node: str, update: dict) -> list[dict]:
     if node in ("generate_sql", "generate_python"):
         language = "sql" if node == "generate_sql" else "python"
         return [{"type": "code", "language": language, "value": update["code"], "attempt": update["attempts"]}]
-    if node in ("execute_sql", "execute_python", "analyze_sentiment", "run_forecast", "describe_dataset"):
+    if node in ("execute_sql", "execute_python", "analyze_sentiment", "run_forecast", "describe_dataset", "answer_document"):
         if update.get("error"):
             return [{"type": "retry", "error": update["error"]}]
         events = []
@@ -277,6 +336,8 @@ def _events_for(node: str, update: dict) -> list[dict]:
                 events.append({"type": "chart", "spec": update["chart"]})
             if update.get("samples"):
                 events.append({"type": "samples", "items": update["samples"]})
+        if update.get("sources"):
+            events.append({"type": "sources", "items": update["sources"]})
         # These nodes may also finish the turn themselves (a forecast, or "no text column").
         if update.get("answer"):
             events.append({"type": "answer", "text": update["answer"]})

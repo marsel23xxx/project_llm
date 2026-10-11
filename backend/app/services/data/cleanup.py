@@ -18,7 +18,8 @@ async def delete_expired_datasets() -> int:
         now = datetime.now(timezone.utc)
         expired = (await session.scalars(select(Dataset).where(Dataset.expires_at <= now))).all()
         for dataset in expired:
-            Path(dataset.duckdb_path).unlink(missing_ok=True)
+            if dataset.duckdb_path:  # documents keep their text in the database, not in a file
+                Path(dataset.duckdb_path).unlink(missing_ok=True)
             await session.delete(dataset)
         await session.commit()
         return len(expired)

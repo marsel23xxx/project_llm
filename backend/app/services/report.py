@@ -29,6 +29,8 @@ INTENT_LABEL = {
     "sentiment": "Analisis sentimen",
     "forecast": "Prediksi",
     "profile": "Ringkasan dataset",
+    "doc_qa": "Tanya dokumen",
+    "doc_summary": "Ringkasan dokumen",
     "chat": "Obrolan",
 }
 
@@ -176,7 +178,7 @@ def build_pdf(question: str, answer: str, steps: list[dict], dataset_name: str, 
         return next((s for s in reversed(steps) if s.get("type") == kind), None)
 
     intent, table, chart = last("intent"), last("table"), last("chart")
-    samples, note, code = last("samples"), last("stdout"), last("code")
+    samples, note, code, sources = last("samples"), last("stdout"), last("code"), last("sources")
 
     story = [
         _paragraph("Laporan Analisis Data", TITLE),
@@ -199,6 +201,9 @@ def build_pdf(question: str, answer: str, steps: list[dict], dataset_name: str, 
     if samples and samples.get("items"):
         story.append(_paragraph("Contoh teks", HEADING))
         story += [_paragraph(f"[{item['label']}] {item['text']}", SMALL) for item in samples["items"]]
+    if sources and sources.get("items"):
+        story.append(_paragraph("Sumber di dokumen", HEADING))
+        story += [_paragraph(f"Hal. {item['page']}: {item['text']}", SMALL) for item in sources["items"]]
     if note or code:
         story.append(_paragraph("Cara perhitungan", HEADING))
         if note:

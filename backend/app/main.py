@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from redis.asyncio import Redis
+from sqlalchemy import text
 
 from app.api.v1 import auth, chat, datasets, health
 from app.core.config import get_settings
@@ -26,6 +27,8 @@ async def lifespan(app: FastAPI):
     # Tables are created directly for now; switch to Alembic migrations before the schema settles.
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # create_all never alters an existing table; columns added after the first release go here.
+        await conn.execute(text("ALTER TABLE datasets ADD COLUMN IF NOT EXISTS kind VARCHAR(16) NOT NULL DEFAULT 'table'"))
 
     app.state.redis = Redis.from_url(settings.redis_url, decode_responses=True)
     app.state.llm = LLMRouter(settings)

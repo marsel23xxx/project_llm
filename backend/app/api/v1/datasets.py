@@ -9,10 +9,11 @@ from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
 from app.core.config import get_settings
-from app.db.models import Dataset
+from app.db.models import Dataset, DocumentChunk
 from app.schemas import DatasetOut, DatasetProfile, DatasetUploaded
 from app.services.data.ingest import SUPPORTED_SUFFIXES, IngestError, load_dataframe, write_duckdb
 from app.services.data.profiling import profile_table
+from app.services.documents import DocumentError, chunk_pages, extract_pages
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
 
@@ -36,8 +37,8 @@ def _ingest(upload_path: Path, db_path: Path) -> tuple[int, dict]:
 async def upload_dataset(file: UploadFile, user: CurrentUser, db: DbSession) -> dict:
     settings = get_settings()
     suffix = Path(file.filename or "").suffix.lower()
-    if suffix not in SUPPORTED_SUFFIXES:
-        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Hanya file CSV atau XLSX yang didukung")
+    if suffix not in SUPPORTED_SUFFIXES | {".pdf"}:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Hanya file CSV, XLSX, atau PDF yang didukung")
 
     max_bytes = settings.max_upload_mb * 1024 * 1024
     dataset_id = uuid.uuid4()
@@ -54,6 +55,8 @@ async def upload_dataset(file: UploadFile, user: CurrentUser, db: DbSession) -> 
                         status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, f"Ukuran file maksimal {settings.max_upload_mb} MB"
                     )
                 out.write(chunk)
+        if suffix == ".pdf":
+            return await _store_document(db, user, dataset_id, file.filename, upload_path)
         try:
             # pandas/DuckDB are blocking; keep the event loop free for other users.
             row_count, profile = await asyncio.to_thread(_ingest, upload_path, db_path)
@@ -76,6 +79,31 @@ async def upload_dataset(file: UploadFile, user: CurrentUser, db: DbSession) -> 
     return {**DatasetOut.model_validate(dataset).model_dump(), "profile": profile}
 
 
+async def _store_document(db: DbSession, user: CurrentUser, dataset_id: uuid.UUID, filename: str, path: Path) -> dict:
+    try:
+        pages = await asyncio.to_thread(extract_pages, path)
+    except DocumentError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    chunks = chunk_pages(pages)
+
+    dataset = Dataset(
+        id=dataset_id,
+        user_id=user.id,
+        original_filename=filename,
+        kind="document",
+        duckdb_path="",
+        row_count=len(pages),
+        schema_json=[],
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=get_settings().dataset_ttl_hours),
+    )
+    db.add(dataset)
+    db.add_all(DocumentChunk(dataset_id=dataset_id, page=c.page, position=c.position, text=c.text) for c in chunks)
+    await db.commit()
+    await db.refresh(dataset)
+    profile = {"row_count": len(pages), "columns": [], "sample": []}
+    return {**DatasetOut.model_validate(dataset).model_dump(), "profile": profile}
+
+
 @router.get("", response_model=list[DatasetOut])
 async def list_datasets(user: CurrentUser, db: DbSession) -> list[Dataset]:
     rows = await db.scalars(select(Dataset).where(Dataset.user_id == user.id).order_by(Dataset.created_at.desc()))
@@ -85,12 +113,15 @@ async def list_datasets(user: CurrentUser, db: DbSession) -> list[Dataset]:
 @router.get("/{dataset_id}/profile", response_model=DatasetProfile)
 async def get_profile(dataset_id: uuid.UUID, user: CurrentUser, db: DbSession) -> dict:
     dataset = await _get_owned(db, user, dataset_id)
+    if dataset.kind != "table":
+        return {"row_count": dataset.row_count, "columns": [], "sample": []}
     return await asyncio.to_thread(profile_table, Path(dataset.duckdb_path))
 
 
 @router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_dataset(dataset_id: uuid.UUID, user: CurrentUser, db: DbSession) -> None:
     dataset = await _get_owned(db, user, dataset_id)
-    Path(dataset.duckdb_path).unlink(missing_ok=True)
+    if dataset.duckdb_path:
+        Path(dataset.duckdb_path).unlink(missing_ok=True)
     await db.delete(dataset)
     await db.commit()

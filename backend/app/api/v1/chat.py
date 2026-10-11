@@ -14,7 +14,7 @@ from sqlalchemy import select
 from app.api.deps import CurrentUser, DbSession, RedisClient
 from app.core import rate_limit
 from app.core.config import get_settings
-from app.db.models import ChatSession, Dataset, Message
+from app.db.models import ChatSession, Dataset, DocumentChunk, Message
 from app.db.session import SessionLocal
 from app.schemas import MessageIn, SessionCreate, SessionDetail, SessionOut
 from app.services.agent import prompts
@@ -95,6 +95,10 @@ async def _save_reply(
         await db.commit()
 
 
+def _session_out(session: ChatSession, kind: str) -> dict:
+    return {**SessionOut.model_validate(session).model_dump(), "kind": kind}
+
+
 def _sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False, default=str)}\n\n"
 
@@ -108,15 +112,18 @@ async def create_session(body: SessionCreate, user: CurrentUser, db: DbSession) 
     db.add(session)
     await db.commit()
     await db.refresh(session)
-    return session
+    return _session_out(session, dataset.kind)
 
 
 @router.get("/sessions", response_model=list[SessionOut])
-async def list_sessions(user: CurrentUser, db: DbSession) -> list[ChatSession]:
-    rows = await db.scalars(
-        select(ChatSession).where(ChatSession.user_id == user.id).order_by(ChatSession.created_at.desc())
+async def list_sessions(user: CurrentUser, db: DbSession) -> list[dict]:
+    rows = await db.execute(
+        select(ChatSession, Dataset.kind)
+        .join(Dataset, Dataset.id == ChatSession.dataset_id)
+        .where(ChatSession.user_id == user.id)
+        .order_by(ChatSession.created_at.desc())
     )
-    return list(rows)
+    return [_session_out(session, kind) for session, kind in rows]
 
 
 @router.get("/sessions/{session_id}", response_model=SessionDetail)
@@ -125,7 +132,8 @@ async def get_session(session_id: uuid.UUID, user: CurrentUser, db: DbSession) -
     messages = await db.scalars(
         select(Message).where(Message.session_id == session.id).order_by(Message.created_at)
     )
-    return {**SessionOut.model_validate(session).model_dump(), "messages": list(messages)}
+    dataset = await db.get(Dataset, session.dataset_id)
+    return {**_session_out(session, dataset.kind if dataset else "table"), "messages": list(messages)}
 
 
 @router.post("/sessions/{session_id}/messages")
@@ -135,7 +143,8 @@ async def send_message(
     settings = get_settings()
     session = await _get_session(db, user, session_id)
     dataset = await db.get(Dataset, session.dataset_id)
-    if dataset is None or not Path(dataset.duckdb_path).exists():
+    is_document = dataset is not None and dataset.kind == "document"
+    if dataset is None or (not is_document and not Path(dataset.duckdb_path).exists()):
         raise HTTPException(status.HTTP_410_GONE, "Dataset sudah kedaluwarsa, silakan unggah ulang")
 
     quota_key = f"quota:{user.id}:{date.today().isoformat()}"
@@ -152,21 +161,34 @@ async def send_message(
             .limit(settings.history_messages)
         )
     )[::-1]
-    sample = await asyncio.to_thread(
-        run_sql, Path(dataset.duckdb_path), "SELECT * FROM data", settings.sql_timeout_seconds, SAMPLE_ROWS
-    )
-    context = prompts.dataset_context(
-        _schema_text(dataset),
-        json.dumps({"kolom": sample.columns, "baris": sample.rows}, ensure_ascii=False, default=str),
-        _history_text(history),
-    )
+    extra: dict = {}
+    if is_document:
+        chunks = await db.scalars(
+            select(DocumentChunk).where(DocumentChunk.dataset_id == dataset.id).order_by(DocumentChunk.position)
+        )
+        extra = {
+            "doc_chunks": [{"page": c.page, "position": c.position, "text": c.text} for c in chunks],
+            # Only the last exchange: a small model loses the thread with more, and context is tight.
+            "history": _history_text(history[-2:]),
+            "previous_question": next((m.content for m in reversed(history) if m.role == "user"), ""),
+        }
+        context = ""
+    else:
+        sample = await asyncio.to_thread(
+            run_sql, Path(dataset.duckdb_path), "SELECT * FROM data", settings.sql_timeout_seconds, SAMPLE_ROWS
+        )
+        context = prompts.dataset_context(
+            _schema_text(dataset),
+            json.dumps({"kolom": sample.columns, "baris": sample.rows}, ensure_ascii=False, default=str),
+            _history_text(history),
+        )
 
     db.add(Message(session_id=session.id, role="user", content=body.content, steps_json=[], usage_json=[]))
     await db.commit()
 
     agent = request.app.state.agent
     question, wants_file = split_export_request(body.content)
-    initial = {"question": question, "context": context, "db_path": dataset.duckdb_path, "usage": []}
+    initial = {"question": question, "context": context, "db_path": dataset.duckdb_path, "usage": [], **extra}
     message_id = uuid.uuid4()
 
     async def event_stream():

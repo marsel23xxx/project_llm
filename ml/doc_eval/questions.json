@@ -1,0 +1,16 @@
+[
+  {"q": "berapa tarif linen infeksius per kg?", "page": 4, "must": ["7.000"]},
+  {"q": "berapa tarif cuci linen biasa?", "page": 4, "must": ["4.500"]},
+  {"q": "kapan batas waktu melaporkan linen hilang?", "page": 5, "must": ["2 x 24"]},
+  {"q": "jam berapa saja linen kotor diambil?", "page": 2, "must": ["07.00", "15.00"]},
+  {"q": "pada suhu berapa linen infeksius dicuci?", "page": 3, "must": ["71"]},
+  {"q": "berapa denda kalau telat bayar?", "page": 4, "must": ["2 persen"]},
+  {"q": "siapa penanggung jawab SOP ini?", "page": 1, "must": ["manajer operasional"]},
+  {"q": "berapa biaya tambahan layanan kilat?", "page": 2, "must": ["30"]},
+  {"q": "kalau linen rusak saat dicuci, diganti berapa persen?", "page": 5, "must": ["80"]},
+  {"q": "kapan SOP ini mulai berlaku?", "page": 1, "must": ["1 september 2026"]},
+  {"q": "berapa lama keluhan harus diselesaikan?", "page": 5, "must": ["5 hari"]},
+  {"q": "paling lambat tanggal berapa tagihan harus dibayar?", "page": 4, "must": ["10"]},
+  {"q": "siapa nama direktur perusahaan ini?", "page": null, "must": []},
+  {"q": "berapa jumlah karyawan unit laundry?", "page": null, "must": []}
+]

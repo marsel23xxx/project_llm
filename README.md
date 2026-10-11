@@ -1,8 +1,8 @@
 # Agentic Data Analyst
 
-Asisten analisis data berbasis AI agent. User mengunggah CSV/Excel, lalu bertanya dalam Bahasa Indonesia; agent menulis SQL/Python, menjalankannya dengan aman, dan menjawab dengan tabel, grafik, dan insight.
+Asisten analisis data berbasis AI agent. User mengunggah CSV/Excel atau PDF, lalu bertanya dalam Bahasa Indonesia; agent menulis SQL/Python, menjalankannya dengan aman, dan menjawab dengan tabel, grafik, dan insight.
 
-> Status: **Fase 3 (Model ML) selesai**: agent LangGraph dengan 5 jalur (SQL, Python sandbox, sentimen IndoBERT, forecasting LSTM, obrolan), router intent scikit-learn, dan ketiga framework (Scikit-learn, PyTorch, TensorFlow) terpakai. Berikutnya: optimasi, CI/CD, monitoring, deploy.
+> Status: agent LangGraph untuk data tabel (SQL, Python sandbox, sentimen IndoBERT, forecasting LSTM, ringkasan dataset) dan dokumen PDF (tanya-jawab dengan sumber halaman), laporan PDF, live di VPS. Berikutnya: CI/CD dan monitoring.
 
 ## Cara kerja agent
 
@@ -23,6 +23,27 @@ pertanyaan ─► route ─┬─ sql ───────► generate_sql ─�
 - **Laporan PDF**: setiap jawaban bisa diunduh sebagai PDF (pertanyaan, jawaban, grafik, tabel, cara perhitungan) yang dibuat server dari langkah agent yang tersimpan, bukan oleh LLM. Permintaan seperti "buatkan dalam PDF" dijawab normal lalu diarahkan ke tombol ini.
 - **Ringkasan dataset**: pertanyaan "ringkas isi data ini" dijawab dari profil kolom tanpa LLM.
 - **Streaming**: setiap langkah agent (intent, kode, tabel, grafik, jawaban) dikirim lewat SSE dan disimpan agar riwayat chat tampil sama persis.
+
+## Dokumen PDF (RAG)
+
+PDF dipecah per halaman menjadi potongan 110 kata. Untuk setiap pertanyaan, 3 potongan paling relevan dicari dengan TF-IDF (kata + n-gram karakter, tahan typo dan slang), lalu LLM menjawab hanya dari kutipan itu. Halaman sumber ditampilkan oleh aplikasi dari hasil pencarian, bukan ditulis oleh LLM.
+
+Evaluasi pada `samples/sop_layanan_linen.pdf` dengan 14 pertanyaan berkunci jawaban (`ml/benchmark_documents.py`, model qwen2.5-coder-3b-instruct di CPU):
+
+| Ukuran | Hasil |
+| --- | --- |
+| Halaman yang benar masuk 3 teratas | 12/12 |
+| Halaman yang benar di peringkat 1 | 12/12 |
+| Jawaban benar (jawaban ada di dokumen) | 11/12 |
+| Menolak menjawab saat jawaban memang tidak ada | 2/2 |
+| Waktu per jawaban | median 20.1 detik, maksimum 40.5 detik |
+
+Keputusan desain dan batasannya:
+- LLM di CPU membaca sekitar 15 sampai 20 token prompt per detik, jadi ukuran prompt adalah latensi. Versi pertama (4 potongan 170 kata) butuh 42 sampai 171 detik dan sering menjawab "tidak ditemukan"; potongan lebih kecil, lebih sedikit, dan urutan terkuat di dekat pertanyaan menurunkannya ke sekitar 20 detik dengan jawaban yang lebih tepat.
+- Ringkasan dokumen panjang dibuat dari 12 cuplikan yang tersebar merata di seluruh halaman, dan jawaban menyebutkan hal itu.
+- Satu kegagalan yang tersisa pada evaluasi adalah model 3B menjawab "tidak ditemukan" walau kutipannya benar; prompt tidak disetel khusus untuk pertanyaan itu.
+- Evaluasi ini memakai satu dokumen sintetis yang pendek. Dokumen nyata yang panjang, bertabel rumit, atau hasil scan (ditolak, belum ada OCR) belum terukur.
+- Pencarian masih leksikal. Embedding + pgvector adalah langkah berikutnya untuk pertanyaan yang memakai kata berbeda dari dokumen.
 
 ## Model ML
 
@@ -80,6 +101,8 @@ backend/                FastAPI
   app/services/data/    ingest CSV/XLSX ke DuckDB, profiling, cleanup 24 jam
   app/services/llm/     provider lokal (llama.cpp) + Claude API, router hybrid
   app/services/agent/   graph LangGraph, guardrail, eksekutor DuckDB, klien sandbox, pemilih grafik, sentimen
+  app/services/documents.py   ekstraksi PDF, pemecahan teks, pencarian kutipan
+  app/services/report.py      pembuat laporan PDF
   app/ml/               normalisasi teks Indonesia + pemuat model
   models/               model terlatih (intent, sentimen)
   tests/
@@ -138,7 +161,7 @@ Gunakan `local` selama development. Isi `ANTHROPIC_API_KEY` dan pasang spend lim
 | POST | `/api/v1/auth/refresh` | Perpanjang sesi |
 | POST | `/api/v1/auth/logout` | Keluar |
 | GET | `/api/v1/auth/me` | Data user yang login |
-| POST | `/api/v1/datasets` | Upload CSV/XLSX (maks 50 MB), return profil kolom |
+| POST | `/api/v1/datasets` | Upload CSV/XLSX/PDF (maks 50 MB) |
 | GET | `/api/v1/datasets` | Daftar dataset milik user |
 | GET | `/api/v1/datasets/{id}/profile` | Statistik kolom + sampel baris |
 | DELETE | `/api/v1/datasets/{id}` | Hapus dataset beserta percakapannya |
