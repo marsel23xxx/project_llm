@@ -1,0 +1,139 @@
+{
+  "generated_at": "2026-10-10T13:42:45+00:00",
+  "selected": "tfidf_linearsvc",
+  "candidates": {
+    "tfidf_logreg": {
+      "val": {
+        "accuracy": 0.8056,
+        "macro_f1": 0.7517,
+        "ms_per_question": 0.637
+      },
+      "heldout": {
+        "accuracy": 0.8061,
+        "macro_f1": 0.8022,
+        "ms_per_question": 0.189
+      }
+    },
+    "tfidf_linearsvc": {
+      "val": {
+        "accuracy": 0.9206,
+        "macro_f1": 0.9085,
+        "ms_per_question": 0.131
+      },
+      "heldout": {
+        "accuracy": 0.8265,
+        "macro_f1": 0.8357,
+        "ms_per_question": 0.168
+      }
+    }
+  },
+  "threshold": {
+    "threshold": 0.9,
+    "val_precision": 0.9861,
+    "val_coverage": 0.2857
+  },
+  "final_heldout": {
+    "accuracy": 0.8673,
+    "macro_f1": 0.8732,
+    "ms_per_question": 0.178,
+    "routing": {
+      "coverage": 0.449,
+      "precision_when_trusted": 1.0
+    }
+  },
+  "per_class": {
+    "chat": {
+      "precision": 1.0,
+      "recall": 0.9090909090909091,
+      "f1-score": 0.9523809523809523,
+      "support": 22.0
+    },
+    "python": {
+      "precision": 0.7241379310344828,
+      "recall": 0.9545454545454546,
+      "f1-score": 0.8235294117647058,
+      "support": 22.0
+    },
+    "sentiment": {
+      "precision": 0.8181818181818182,
+      "recall": 0.9473684210526315,
+      "f1-score": 0.8780487804878049,
+      "support": 19.0
+    },
+    "sql": {
+      "precision": 0.9629629629629629,
+      "recall": 0.7428571428571429,
+      "f1-score": 0.8387096774193549,
+      "support": 35.0
+    }
+  },
+  "heldout_errors": [
+    {
+      "text": "produk apa yang paling laku",
+      "label": "sql",
+      "predicted": "python"
+    },
+    {
+      "text": "siapa sales dengan closing terbanyak",
+      "label": "sql",
+      "predicted": "python"
+    },
+    {
+      "text": "gimana perkembangan pendapatan dari januari sampai sekarang",
+      "label": "sql",
+      "predicted": "python"
+    },
+    {
+      "text": "mana wilayah yang paling banyak pengaduannya",
+      "label": "sql",
+      "predicted": "sentiment"
+    },
+    {
+      "text": "dinas mana yang paling lambat merespon pengaduan",
+      "label": "sql",
+      "predicted": "python"
+    },
+    {
+      "text": "tunjukkan perbandingan penjualan online dan offline",
+      "label": "sql",
+      "predicted": "python"
+    },
+    {
+      "text": "merek apa yang paling banyak dibeli cewek",
+      "label": "sql",
+      "predicted": "sentiment"
+    },
+    {
+      "text": "persentase pengaduan yang sudah selesai",
+      "label": "sql",
+      "predicted": "sentiment"
+    },
+    {
+      "text": "segmentasi pelanggan pakai rfm",
+      "label": "python",
+      "predicted": "sentiment"
+    },
+    {
+      "text": "cabang mana yang reviewnya paling jelek",
+      "label": "sentiment",
+      "predicted": "sql"
+    },
+    {
+      "text": "test",
+      "label": "chat",
+      "predicted": "python"
+    },
+    {
+      "text": "apakah data saya dipakai untuk melatih model",
+      "label": "chat",
+      "predicted": "python"
+    },
+    {
+      "text": "cabang dengan omzet di bawah 10 juta",
+      "label": "sql",
+      "predicted": "python"
+    }
+  ],
+  "artifact": "backend/models/intent.joblib",
+  "artifact_kb": 253.6
+}

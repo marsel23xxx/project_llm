@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f7f7f5;
+  --surface: #ffffff;
+  --foreground: #171717;
+  --muted: #5f5e5a;
+  --border: #e4e3df;
+  --accent: #2a78d6;
+
+  /* Chart roles: validated categorical slots 1-3 (dataviz reference palette) */
+  --chart-surface: #fcfcfb;
+  --chart-text: #52514e;
+  --chart-grid: #e8e7e3;
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #121211;
+    --surface: #1a1a19;
+    --foreground: #ededed;
+    --muted: #a8a79f;
+    --border: #2e2e2c;
+    --accent: #3987e5;
+
+    --chart-surface: #1a1a19;
+    --chart-text: #c3c2b7;
+    --chart-grid: #2e2e2c;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+  }
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+}

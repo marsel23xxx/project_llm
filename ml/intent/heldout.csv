@@ -1,0 +1,99 @@
+text,label
+produk apa yang paling laku,sql
+bulan apa penjualan paling jeblok?,sql
+coba lihat omzet tiap cabang tahun ini,sql
+brp total transaksi kemarin,sql
+siapa sales dengan closing terbanyak,sql
+gimana perkembangan pendapatan dari januari sampai sekarang,sql
+toko di surabaya jualannya berapa,sql
+tolong rangkum penjualan per kategori,sql
+mana wilayah yang paling banyak pengaduannya,sql
+data ini isinya berapa baris sih,sql
+pengen liat grafik laba per kuartal,sql
+berapa harga rata2 produk elektronik,sql
+kecamatan mana yang laporannya paling sedikit,sql
+tampilin 10 pelanggan yang paling sering belanja,sql
+naik atau turun penjualan bulan ini dibanding bulan lalu,sql
+total anggaran yang sudah terealisasi berapa persen,sql
+list semua produk yang stoknya di bawah 10,sql
+hari apa toko paling ramai,sql
+jumlah pelanggan baru per bulan,sql
+channel mana yang paling menguntungkan,sql
+berapa banyak transaksi yang pakai qris,sql
+breakdown pendapatan per segmen pelanggan,sql
+dinas mana yang paling lambat merespon pengaduan,sql
+omzet minggu lalu,sql
+tunjukkan perbandingan penjualan online dan offline,sql
+berapa median gaji karyawan per divisi,sql
+cabang mana yang targetnya belum tercapai,sql
+merek apa yang paling banyak dibeli cewek,sql
+persentase pengaduan yang sudah selesai,sql
+rata-rata waktu pengiriman per kota,sql
+ada berapa kategori produk,sql
+penjualan terbesar terjadi tanggal berapa,sql
+apa ada hubungan antara harga sama jumlah terjual,python
+cek outlier di kolom gaji,python
+transaksi mana yang mencurigakan nilainya,python
+bisa kelompokin pelanggan berdasarkan pola belanjanya,python
+apakah diskon benar-benar ngaruh ke penjualan secara statistik,python
+distribusi umur pelanggan kayak gimana,python
+prediksi laba dari biaya iklan pakai regresi,python
+korelasi antar semua kolom numerik,python
+apakah rata-rata penjualan cabang A dan B beda signifikan,python
+variabel apa yang paling memengaruhi kepuasan,python
+segmentasi pelanggan pakai rfm,python
+nilai stok yang aneh atau ekstrem ada gak,python
+uji normalitas data harga,python
+clustering wilayah berdasarkan jumlah pengaduan dan populasi,python
+seberapa erat kaitan durasi layanan dengan skor kepuasan,python
+pola musiman dari penjualan ada atau tidak secara statistik,python
+apakah jenis kelamin berhubungan dengan pilihan produk,python
+cari anomali pada data transaksi,python
+buat analisis regresi berganda untuk omzet,python
+hitung standar deviasi dan sebaran nilai,python
+review pelanggan kebanyakan puas gak,sentiment
+gimana tanggapan orang soal produk kita,sentiment
+berapa banyak keluhan yang nadanya marah,sentiment
+cek sentimen komentar instagram,sentiment
+ulasan mana yang paling negatif,sentiment
+pengaduan warga isinya positif atau negatif,sentiment
+cabang mana yang reviewnya paling jelek,sentiment
+analisa perasaan pelanggan dari kolom feedback,sentiment
+apakah testimoni bulan ini lebih positif dari bulan lalu,sentiment
+persentase review bintang jelek berdasarkan isinya,sentiment
+opini netizen tentang layanan kami gimana,sentiment
+kolom saran isinya mayoritas kritik atau pujian,sentiment
+sentiment analysis untuk kolom review,sentiment
+pelanggan senang gak sama pelayanan berdasarkan ulasan,sentiment
+klasifikasi komentar jadi positif dan negatif,sentiment
+nada tweet tentang brand kita gimana,sentiment
+seberapa puas warga menurut isi laporan,sentiment
+halo bang,chat
+pagi,chat
+makasih ya udah bantu,chat
+kamu siapa sebenarnya,chat
+fitur apa aja yang ada,chat
+cara upload file gimana,chat
+file saya disimpan berapa lama,chat
+kamu manusia atau robot,chat
+wah keren,chat
+oke siap,chat
+apa bedanya sql sama python,chat
+bisa jelasin apa itu korelasi,chat
+kok lama banget jawabnya,chat
+selamat siang,chat
+ada yang bisa saya tanyakan,chat
+kamu dibuat siapa,chat
+test,chat
+hmm,chat
+apakah data saya dipakai untuk melatih model,chat
+tolong jangan salah lagi ya,chat
+jumlah penjualan per hari dalam seminggu terakhir,sql
+cabang dengan omzet di bawah 10 juta,sql
+penjualan produk kopi tiap bulan buat grafik,sql
+prediksi pengaruh hujan terhadap penjualan dengan model statistik,python
+cari kelompok produk yang mirip,python
+keluhan pelanggan soal pengiriman sentimennya apa,sentiment
+review negatif paling banyak di kota mana,sentiment
+terima kasih banyak,chat
+apa kabar,chat

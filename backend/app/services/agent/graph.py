@@ -1,0 +1,273 @@
+"""The data-analyst agent as an explicit LangGraph state machine.
+
+    route ─┬─ sql ──────► generate_sql ──► execute_sql ─┬─► summarize
+           │                   ▲                         │
+           │                   └──── error, retry ◄──────┤
+           ├─ python ───► generate_python ─► run_python ──┤ (same retry loop)
+           │                                             └─► fail (after max attempts)
+           ├─ sentiment ► analyze_sentiment ─────────────────► summarize (or explain why not)
+           └─ chat ─────► answer_chat
+
+`route` asks the trained intent classifier first and only calls the LLM when it is unsure.
+"""
+
+import asyncio
+import json
+import operator
+import re
+from collections.abc import AsyncIterator
+from dataclasses import asdict
+from pathlib import Path
+from typing import Annotated, Literal, TypedDict
+
+from langgraph.graph import END, START, StateGraph
+
+from app.core.config import Settings
+from app.ml.models import MLModels
+from app.services.agent import prompts
+from app.services.agent.charts import suggest_chart
+from app.services.agent.executor import ExecutionError, QueryResult, run_sql
+from app.services.agent.guardrail import GuardrailError, validate_sql
+from app.services.agent.sandbox_client import run_python
+from app.services.agent.sentiment import SentimentUnavailable
+from app.services.agent.sentiment import analyze as analyze_text_sentiment
+from app.services.llm.base import LLMError, LLMResult
+from app.services.llm.router import LLMRouter
+
+Intent = Literal["sql", "python", "sentiment", "chat"]
+SUMMARY_ROWS = 20
+
+_CODE_BLOCK = re.compile(r"```(?:sql|python|py)?\s*\n?(.*?)```", re.DOTALL | re.IGNORECASE)
+
+
+class AgentState(TypedDict, total=False):
+    question: str
+    context: str
+    db_path: str
+    intent: Intent
+    code: str
+    attempts: int
+    error: str | None
+    result: dict | None
+    chart: dict | None
+    samples: list[dict]
+    answer: str
+    usage: Annotated[list[dict], operator.add]
+
+
+def extract_code(text: str) -> str:
+    match = _CODE_BLOCK.search(text)
+    return (match.group(1) if match else text).strip()
+
+
+def parse_intent(text: str) -> Intent:
+    words = re.findall(r"[a-z]+", text.lower())
+    for intent in ("python", "sentiment", "chat", "sql"):
+        if intent in words[:3]:
+            return intent
+    return "sql"
+
+
+def _usage(result: LLMResult, step: str) -> list[dict]:
+    return [{"step": step, **{k: v for k, v in asdict(result).items() if k != "text"}}]
+
+
+def format_id(value):
+    """Pre-format numbers Indonesian-style so a small model copies them instead of re-formatting."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return value
+    if isinstance(value, float) and not value.is_integer():
+        text = f"{value:,.2f}"
+    else:
+        text = f"{int(value):,}"
+    return text.replace(",", "_").replace(".", ",").replace("_", ".")
+
+
+def _result_for_prompt(result: dict) -> str:
+    if result.get("value") is not None:
+        body = json.dumps(result["value"], ensure_ascii=False, default=str)[:4000]
+    else:
+        rows = [[format_id(v) for v in row] for row in result["rows"][:SUMMARY_ROWS]]
+        body = json.dumps({"kolom": result["columns"], "baris": rows}, ensure_ascii=False, default=str)
+        if result["truncated"] or len(result["rows"]) > SUMMARY_ROWS:
+            body += f"\n(hanya {len(rows)} dari {len(result['rows'])}{'+' if result['truncated'] else ''} baris ditampilkan)"
+    if result.get("stdout"):
+        body += f"\nOutput print:\n{result['stdout'][-2000:]}"
+    return body
+
+
+def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
+    max_attempts = settings.agent_max_attempts
+    intent_model = ml.intent if ml else None
+    sentiment_model = ml.sentiment if ml else None
+
+    async def route(state: AgentState) -> dict:
+        kind = "simple"
+        if intent_model:
+            pred = intent_model.predict(state["question"])
+            confident = pred.confidence >= (settings.intent_min_confidence or intent_model.threshold)
+            # Only a stronger router is worth a call: the local 3B model routes worse than the
+            # classifier (ml/reports/router_benchmark.json), so without Claude the classifier decides.
+            if confident or not getattr(llm, "has_strong_model", False):
+                usage = {"step": "route", "provider": "ml", "model": intent_model.name, "confidence": round(pred.confidence, 3)}
+                return {"intent": pred.label, "attempts": 0, "usage": [usage]}
+            kind = "complex"
+        try:
+            out = await llm.complete(kind, prompts.ROUTER_SYSTEM, [{"role": "user", "content": state["question"]}], 16)
+        except LLMError:
+            return {"intent": "sql", "attempts": 0, "usage": []}
+        return {"intent": parse_intent(out.text), "attempts": 0, "usage": _usage(out, "route")}
+
+    def _generator(system: str, step: str):
+        async def generate(state: AgentState) -> dict:
+            request = prompts.code_request(state["context"], state["question"], state.get("code"), state.get("error"))
+            out = await llm.complete("complex", system, [{"role": "user", "content": request}], 1500)
+            return {"code": extract_code(out.text), "attempts": state["attempts"] + 1, "usage": _usage(out, step)}
+
+        return generate
+
+    def _finish(result: QueryResult) -> dict:
+        chart = suggest_chart(result.columns, result.types, result.rows) if result.columns else None
+        payload = {**result.to_event(), "stdout": result.stdout, "value": result.value}
+        return {"result": payload, "chart": chart, "error": None}
+
+    async def execute_sql(state: AgentState) -> dict:
+        try:
+            sql = validate_sql(state["code"])
+            result = await asyncio.to_thread(
+                run_sql, Path(state["db_path"]), sql, settings.sql_timeout_seconds, settings.max_result_rows
+            )
+        except (GuardrailError, ExecutionError) as exc:
+            return {"error": str(exc)}
+        return _finish(result)
+
+    async def execute_python(state: AgentState) -> dict:
+        try:
+            result = await run_python(settings.sandbox_url, Path(state["db_path"]), state["code"])
+        except ExecutionError as exc:
+            return {"error": str(exc)}
+        return _finish(result)
+
+    def after_execute(retry_node: str):
+        def decide(state: AgentState) -> str:
+            if not state.get("error"):
+                return "summarize"
+            return retry_node if state["attempts"] < max_attempts else "fail"
+
+        return decide
+
+    async def analyze_sentiment(state: AgentState) -> dict:
+        if sentiment_model is None:
+            return {"answer": "Model analisis sentimen belum tersedia di server ini."}
+        try:
+            result, meta = await asyncio.to_thread(
+                analyze_text_sentiment, Path(state["db_path"]), state["question"], sentiment_model
+            )
+        except SentimentUnavailable as exc:
+            return {"answer": str(exc)}
+        note = (
+            f"Kolom teks: {meta['text_column']}. Dianalisis {meta['analyzed']} dari {meta['total']} teks"
+            f"{' (sampel acak)' if meta['sampled'] else ''} dengan model {meta['model']}."
+        )
+        if meta["group_column"]:
+            note += f" Dikelompokkan per {meta['group_column']}."
+        finished = _finish(result)
+        finished["result"]["stdout"] = note
+        if meta["group_column"]:
+            # One measure per group reads cleaner than three category-coloured series for polarity.
+            finished["chart"] = {"kind": "bar", "x": meta["group_column"], "y": ["persen_negatif"]}
+        return {**finished, "samples": meta["samples"]}
+
+    async def summarize(state: AgentState) -> dict:
+        content = f"Pertanyaan: {state['question']}\n\n<hasil>\n{_result_for_prompt(state['result'])}\n</hasil>"
+        try:
+            out = await llm.complete("simple", prompts.SUMMARY_SYSTEM, [{"role": "user", "content": content}], 400)
+        except LLMError:
+            return {"answer": "Berikut hasil analisisnya.", "usage": []}
+        return {"answer": out.text.strip(), "usage": _usage(out, "summarize")}
+
+    async def answer_chat(state: AgentState) -> dict:
+        try:
+            out = await llm.complete("simple", prompts.CHAT_SYSTEM, [{"role": "user", "content": state["question"]}], 400)
+        except LLMError:
+            return {"answer": "Halo! Silakan tanyakan sesuatu tentang dataset yang kamu unggah.", "usage": []}
+        return {"answer": out.text.strip(), "usage": _usage(out, "chat")}
+
+    async def fail(state: AgentState) -> dict:
+        return {
+            "answer": (
+                f"Maaf, saya belum berhasil menjawab setelah {state['attempts']} percobaan. "
+                "Coba ubah pertanyaannya agar lebih spesifik, misalnya sebutkan nama kolom yang dimaksud."
+            )
+        }
+
+    graph = StateGraph(AgentState)
+    graph.add_node("route", route)
+    graph.add_node("generate_sql", _generator(prompts.SQL_SYSTEM, "generate_sql"))
+    graph.add_node("execute_sql", execute_sql)
+    graph.add_node("generate_python", _generator(prompts.PYTHON_SYSTEM, "generate_python"))
+    graph.add_node("execute_python", execute_python)
+    graph.add_node("summarize", summarize)
+    graph.add_node("analyze_sentiment", analyze_sentiment)
+    graph.add_node("answer_chat", answer_chat)
+    graph.add_node("fail", fail)
+
+    graph.add_edge(START, "route")
+    graph.add_conditional_edges(
+        "route",
+        lambda s: s["intent"],
+        {"sql": "generate_sql", "python": "generate_python", "sentiment": "analyze_sentiment", "chat": "answer_chat"},
+    )
+    graph.add_conditional_edges(
+        "analyze_sentiment", lambda s: END if s.get("answer") else "summarize", ["summarize", END]
+    )
+    graph.add_edge("generate_sql", "execute_sql")
+    graph.add_conditional_edges("execute_sql", after_execute("generate_sql"), ["generate_sql", "summarize", "fail"])
+    graph.add_edge("generate_python", "execute_python")
+    graph.add_conditional_edges(
+        "execute_python", after_execute("generate_python"), ["generate_python", "summarize", "fail"]
+    )
+    for terminal in ("summarize", "answer_chat", "fail"):
+        graph.add_edge(terminal, END)
+    return graph.compile()
+
+
+def _events_for(node: str, update: dict) -> list[dict]:
+    if node == "route":
+        return [{"type": "intent", "value": update["intent"]}]
+    if node in ("generate_sql", "generate_python"):
+        language = "sql" if node == "generate_sql" else "python"
+        return [{"type": "code", "language": language, "value": update["code"], "attempt": update["attempts"]}]
+    if node == "analyze_sentiment" and update.get("answer"):
+        return [{"type": "answer", "text": update["answer"]}]
+    if node in ("execute_sql", "execute_python", "analyze_sentiment"):
+        if update.get("error"):
+            return [{"type": "retry", "error": update["error"]}]
+        result = update["result"]
+        events = []
+        if result["columns"]:
+            events.append({k: result[k] for k in ("type", "columns", "types", "rows", "truncated")})
+        elif result.get("value") is not None:
+            events.append({"type": "value", "value": result["value"]})
+        if result.get("stdout"):
+            events.append({"type": "stdout", "value": result["stdout"]})
+        if update.get("chart"):
+            events.append({"type": "chart", "spec": update["chart"]})
+        if update.get("samples"):
+            events.append({"type": "samples", "items": update["samples"]})
+        return events
+    if node in ("summarize", "answer_chat", "fail"):
+        return [{"type": "answer", "text": update["answer"]}]
+    return []
+
+
+async def stream_agent(agent, initial: AgentState) -> AsyncIterator[tuple[dict, list[dict]]]:
+    """Yield (event, usage_so_far) pairs as each graph node finishes."""
+    usage: list[dict] = []
+    async for chunk in agent.astream(initial, stream_mode="updates"):
+        for node, update in chunk.items():
+            if not update:
+                continue
+            usage.extend(update.get("usage", []))
+            for event in _events_for(node, update):
+                yield event, usage

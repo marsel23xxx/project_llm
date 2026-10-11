@@ -1,0 +1,19 @@
+{
+  "questions": 98,
+  "ml": {
+    "model": "tfidf_linearsvc",
+    "accuracy": 0.867,
+    "ms_per_question": 5.1,
+    "threshold": 0.9,
+    "confident_share": 0.449
+  },
+  "llm": {
+    "model": "qwen2.5-coder-3b-instruct",
+    "accuracy": 0.571,
+    "ms_per_question": 1915.5
+  },
+  "ml_then_llm": {
+    "accuracy": 0.714,
+    "llm_calls_saved": "44/98"
+  }
+}

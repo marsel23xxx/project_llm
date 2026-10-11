@@ -1,0 +1,22 @@
+{
+  "model": "indobenchmark/indobert-base-p1",
+  "train_minutes": 3.2,
+  "test_rows": 1260,
+  "pytorch_fp32": {
+    "accuracy": 0.9421,
+    "macro_f1": 0.9192,
+    "ms_per_text_cpu2": 163.87
+  },
+  "onnx_fp32": {
+    "accuracy": 0.9421,
+    "macro_f1": 0.9192,
+    "ms_per_text_cpu2": 189.12,
+    "size_mb": 498.0
+  },
+  "onnx_int8": {
+    "accuracy": 0.9421,
+    "macro_f1": 0.9192,
+    "ms_per_text_cpu2": 131.3,
+    "size_mb": 125.2
+  }
+}

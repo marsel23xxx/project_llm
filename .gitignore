@@ -1,0 +1,16 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+/models/
+data/
+*.duckdb
+node_modules/
+.next/
+ml/mlflow.db
+ml/mlruns/
+ml/data/
+# 125 MB, di atas batas file GitHub; hasilkan lewat ml/colab/indobert_sentiment.ipynb
+backend/models/sentiment_onnx/

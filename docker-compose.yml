@@ -1,0 +1,87 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-analyst}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-analyst}
+      POSTGRES_DB: ${POSTGRES_DB:-analyst}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-analyst}"]
+      interval: 5s
+      retries: 10
+    mem_limit: 512m
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory 256mb --maxmemory-policy volatile-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+    mem_limit: 300m
+    restart: unless-stopped
+
+  # LLM lokal (gratis). Jalankan dengan: docker compose --profile llm up
+  # Unduh modelnya dulu: ./scripts/download_model.sh
+  llm:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    profiles: ["llm"]
+    command: >
+      -m /models/${LOCAL_LLM_FILE:-qwen2.5-coder-3b-instruct-q4_k_m.gguf}
+      --host 0.0.0.0 --port 8080 -c 8192 -t 6
+    volumes:
+      - ./models:/models:ro
+    mem_limit: 4g
+    restart: unless-stopped
+
+  # Menjalankan kode Python buatan agent. Hanya terhubung ke jaringan internal (tanpa internet).
+  sandbox:
+    build: ./sandbox
+    networks: [sandbox_net]
+    volumes:
+      - appdata:/data:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    mem_limit: 2g
+    cpus: 1.0
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    networks: [default, sandbox_net]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-analyst}:${POSTGRES_PASSWORD:-analyst}@postgres:5432/${POSTGRES_DB:-analyst}
+      REDIS_URL: redis://redis:6379/0
+      LOCAL_LLM_URL: http://llm:8080
+      SANDBOX_URL: http://sandbox:8001
+      DATA_DIR: /data
+    volumes:
+      - appdata:/data
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      sandbox:
+        condition: service_started
+    mem_limit: 1536m
+    restart: unless-stopped
+
+networks:
+  sandbox_net:
+    internal: true
+
+volumes:
+  pgdata:
+  appdata:
