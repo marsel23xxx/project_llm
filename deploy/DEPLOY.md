@@ -48,7 +48,7 @@ echo '/swapfile none swap sw 0 0' >> /etc/fstab
 
 ```bash
 mkdir -p /opt && cd /opt
-git clone https://github.com/USERNAME/agentic-data-analyst.git
+git clone https://github.com/marsel23xxx/project_llm.git agentic-data-analyst
 cd agentic-data-analyst
 ```
 
