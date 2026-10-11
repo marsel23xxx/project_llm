@@ -54,6 +54,20 @@ services:
     cpus: 1.0
     restart: unless-stopped
 
+  # LSTM (TensorFlow) vs baseline. Hanya menerima deret angka hasil agregasi, tanpa internet.
+  forecast:
+    build: ./forecast
+    networks: [sandbox_net]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 1536m
+    cpus: 2.0
+    restart: unless-stopped
+
   backend:
     build: ./backend
     networks: [default, sandbox_net]
@@ -63,6 +77,7 @@ services:
       REDIS_URL: redis://redis:6379/0
       LOCAL_LLM_URL: http://llm:8080
       SANDBOX_URL: http://sandbox:8001
+      FORECAST_URL: http://forecast:8002
       DATA_DIR: /data
     volumes:
       - appdata:/data
@@ -74,6 +89,8 @@ services:
       redis:
         condition: service_healthy
       sandbox:
+        condition: service_started
+      forecast:
         condition: service_started
     mem_limit: 1536m
     restart: unless-stopped

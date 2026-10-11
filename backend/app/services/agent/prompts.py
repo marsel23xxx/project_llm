@@ -5,6 +5,7 @@ Jawab dengan SATU kata saja:
 - sql    : pertanyaan yang bisa dijawab dengan query (filter, total, rata-rata, ranking, tren, perbandingan, grafik)
 - python : butuh analisis statistik lanjut (korelasi, regresi, distribusi, outlier, clustering, uji statistik)
 - sentiment : menilai sentimen/opini/nada dari kolom teks (ulasan, komentar, keluhan)
+- forecast : memprediksi/memperkirakan nilai di masa depan dari data bertanggal (bulan depan, 3 bulan ke depan)
 - chat   : sapaan, pertanyaan tentang kemampuanmu, atau tidak berhubungan dengan data"""
 
 SQL_SYSTEM = """Kamu analis data yang menulis SQL DuckDB.

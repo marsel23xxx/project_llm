@@ -6,6 +6,7 @@
            ├─ python ───► generate_python ─► run_python ──┤ (same retry loop)
            │                                             └─► fail (after max attempts)
            ├─ sentiment ► analyze_sentiment ─────────────────► summarize (or explain why not)
+           ├─ forecast ─► run_forecast (LSTM vs baselines, answer built from the numbers)
            └─ chat ─────► answer_chat
 
 `route` asks the trained intent classifier first and only calls the LLM when it is unsure.
@@ -26,6 +27,7 @@ from app.core.config import Settings
 from app.ml.models import MLModels
 from app.services.agent import prompts
 from app.services.agent.charts import suggest_chart
+from app.services.agent import forecast as forecasting
 from app.services.agent.executor import ExecutionError, QueryResult, run_sql
 from app.services.agent.guardrail import GuardrailError, validate_sql
 from app.services.agent.sandbox_client import run_python
@@ -34,7 +36,7 @@ from app.services.agent.sentiment import analyze as analyze_text_sentiment
 from app.services.llm.base import LLMError, LLMResult
 from app.services.llm.router import LLMRouter
 
-Intent = Literal["sql", "python", "sentiment", "chat"]
+Intent = Literal["sql", "python", "sentiment", "forecast", "chat"]
 SUMMARY_ROWS = 20
 
 _CODE_BLOCK = re.compile(r"```(?:sql|python|py)?\s*\n?(.*?)```", re.DOTALL | re.IGNORECASE)
@@ -62,7 +64,7 @@ def extract_code(text: str) -> str:
 
 def parse_intent(text: str) -> Intent:
     words = re.findall(r"[a-z]+", text.lower())
-    for intent in ("python", "sentiment", "chat", "sql"):
+    for intent in ("python", "sentiment", "forecast", "chat", "sql"):
         if intent in words[:3]:
             return intent
     return "sql"
@@ -178,6 +180,17 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
             finished["chart"] = {"kind": "bar", "x": meta["group_column"], "y": ["persen_negatif"]}
         return {**finished, "samples": meta["samples"]}
 
+    async def run_forecast(state: AgentState) -> dict:
+        try:
+            table, chart, note, answer = await forecasting.run(
+                Path(state["db_path"]), state["question"], settings.forecast_url
+            )
+        except forecasting.ForecastUnavailable as exc:
+            return {"answer": str(exc)}
+        finished = _finish(table)
+        finished["result"]["stdout"] = note
+        return {**finished, "chart": chart, "answer": answer}
+
     async def summarize(state: AgentState) -> dict:
         content = f"Pertanyaan: {state['question']}\n\n<hasil>\n{_result_for_prompt(state['result'])}\n</hasil>"
         try:
@@ -209,6 +222,7 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
     graph.add_node("execute_python", execute_python)
     graph.add_node("summarize", summarize)
     graph.add_node("analyze_sentiment", analyze_sentiment)
+    graph.add_node("run_forecast", run_forecast)
     graph.add_node("answer_chat", answer_chat)
     graph.add_node("fail", fail)
 
@@ -216,7 +230,7 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
     graph.add_conditional_edges(
         "route",
         lambda s: s["intent"],
-        {"sql": "generate_sql", "python": "generate_python", "sentiment": "analyze_sentiment", "chat": "answer_chat"},
+        {"sql": "generate_sql", "python": "generate_python", "sentiment": "analyze_sentiment", "forecast": "run_forecast", "chat": "answer_chat"},
     )
     graph.add_conditional_edges(
         "analyze_sentiment", lambda s: END if s.get("answer") else "summarize", ["summarize", END]
@@ -227,7 +241,7 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
     graph.add_conditional_edges(
         "execute_python", after_execute("generate_python"), ["generate_python", "summarize", "fail"]
     )
-    for terminal in ("summarize", "answer_chat", "fail"):
+    for terminal in ("summarize", "answer_chat", "fail", "run_forecast"):
         graph.add_edge(terminal, END)
     return graph.compile()
 
@@ -238,23 +252,25 @@ def _events_for(node: str, update: dict) -> list[dict]:
     if node in ("generate_sql", "generate_python"):
         language = "sql" if node == "generate_sql" else "python"
         return [{"type": "code", "language": language, "value": update["code"], "attempt": update["attempts"]}]
-    if node == "analyze_sentiment" and update.get("answer"):
-        return [{"type": "answer", "text": update["answer"]}]
-    if node in ("execute_sql", "execute_python", "analyze_sentiment"):
+    if node in ("execute_sql", "execute_python", "analyze_sentiment", "run_forecast"):
         if update.get("error"):
             return [{"type": "retry", "error": update["error"]}]
-        result = update["result"]
         events = []
-        if result["columns"]:
-            events.append({k: result[k] for k in ("type", "columns", "types", "rows", "truncated")})
-        elif result.get("value") is not None:
-            events.append({"type": "value", "value": result["value"]})
-        if result.get("stdout"):
-            events.append({"type": "stdout", "value": result["stdout"]})
-        if update.get("chart"):
-            events.append({"type": "chart", "spec": update["chart"]})
-        if update.get("samples"):
-            events.append({"type": "samples", "items": update["samples"]})
+        result = update.get("result")
+        if result:
+            if result["columns"]:
+                events.append({k: result[k] for k in ("type", "columns", "types", "rows", "truncated")})
+            elif result.get("value") is not None:
+                events.append({"type": "value", "value": result["value"]})
+            if result.get("stdout"):
+                events.append({"type": "stdout", "value": result["stdout"]})
+            if update.get("chart"):
+                events.append({"type": "chart", "spec": update["chart"]})
+            if update.get("samples"):
+                events.append({"type": "samples", "items": update["samples"]})
+        # These nodes may also finish the turn themselves (a forecast, or "no text column").
+        if update.get("answer"):
+            events.append({"type": "answer", "text": update["answer"]})
         return events
     if node in ("summarize", "answer_chat", "fail"):
         return [{"type": "answer", "text": update["answer"]}]

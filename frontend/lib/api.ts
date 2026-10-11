@@ -10,7 +10,7 @@ export type Dataset = {
 
 export type ChatSession = { id: string; dataset_id: string; title: string; created_at: string };
 
-export type ChartSpec = { kind: "bar" | "line"; x: string; y: string[] };
+export type ChartSpec = { kind: "bar" | "line"; x: string; y: string[]; dashed?: string[] };
 
 export type TableEvent = {
   type: "table";
@@ -21,7 +21,7 @@ export type TableEvent = {
 };
 
 export type AgentEvent =
-  | { type: "intent"; value: "sql" | "python" | "sentiment" | "chat" }
+  | { type: "intent"; value: "sql" | "python" | "sentiment" | "forecast" | "chat" }
   | { type: "code"; language: "sql" | "python"; value: string; attempt: number }
   | { type: "retry"; error: string }
   | TableEvent

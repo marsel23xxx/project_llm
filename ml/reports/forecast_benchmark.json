@@ -1,0 +1,113 @@
+{
+  "method": "rolling origin, 3 cut-off per dataset; MAE dan sMAPE dirata-rata",
+  "datasets": [
+    {
+      "dataset": "Penumpang pesawat bulanan (144 titik)",
+      "season": 12,
+      "horizon": 12,
+      "scores": {
+        "naive": {
+          "mae": 73.222,
+          "smape": 17.41
+        },
+        "moving_average": {
+          "mae": 57.343,
+          "smape": 13.16
+        },
+        "seasonal_naive": {
+          "mae": 35.917,
+          "smape": 8.52
+        },
+        "lstm": {
+          "mae": 18.653,
+          "smape": 4.51
+        }
+      },
+      "best": "lstm",
+      "best_baseline": "seasonal_naive",
+      "lstm_vs_best_baseline_mae_pct": -48.1,
+      "lstm_fit_seconds": 13.6
+    },
+    {
+      "dataset": "Penjualan mobil bulanan (108 titik)",
+      "season": 12,
+      "horizon": 12,
+      "scores": {
+        "naive": {
+          "mae": 3615.417,
+          "smape": 21.28
+        },
+        "moving_average": {
+          "mae": 3243.181,
+          "smape": 18.85
+        },
+        "seasonal_naive": {
+          "mae": 1461.722,
+          "smape": 8.63
+        },
+        "lstm": {
+          "mae": 2854.967,
+          "smape": 15.16
+        }
+      },
+      "best": "seasonal_naive",
+      "best_baseline": "seasonal_naive",
+      "lstm_vs_best_baseline_mae_pct": 95.3,
+      "lstm_fit_seconds": 7.8
+    },
+    {
+      "dataset": "Kelahiran harian (365 titik)",
+      "season": 7,
+      "horizon": 14,
+      "scores": {
+        "naive": {
+          "mae": 5.81,
+          "smape": 13.37
+        },
+        "moving_average": {
+          "mae": 6.939,
+          "smape": 16.09
+        },
+        "seasonal_naive": {
+          "mae": 7.857,
+          "smape": 18.74
+        },
+        "lstm": {
+          "mae": 6.765,
+          "smape": 15.79
+        }
+      },
+      "best": "naive",
+      "best_baseline": "naive",
+      "lstm_vs_best_baseline_mae_pct": 16.4,
+      "lstm_fit_seconds": 4.7
+    },
+    {
+      "dataset": "Suhu minimum harian (600 titik terakhir)",
+      "season": 7,
+      "horizon": 14,
+      "scores": {
+        "naive": {
+          "mae": 2.469,
+          "smape": 18.55
+        },
+        "moving_average": {
+          "mae": 2.004,
+          "smape": 14.68
+        },
+        "seasonal_naive": {
+          "mae": 2.517,
+          "smape": 19.23
+        },
+        "lstm": {
+          "mae": 2.341,
+          "smape": 17.95
+        }
+      },
+      "best": "moving_average",
+      "best_baseline": "moving_average",
+      "lstm_vs_best_baseline_mae_pct": 16.8,
+      "lstm_fit_seconds": 5.4
+    }
+  ]
+}

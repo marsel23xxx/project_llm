@@ -1,52 +1,58 @@
 {
-  "generated_at": "2026-10-10T13:42:45+00:00",
+  "generated_at": "2026-10-11T10:28:16+00:00",
   "selected": "tfidf_linearsvc",
   "candidates": {
     "tfidf_logreg": {
       "val": {
-        "accuracy": 0.8056,
-        "macro_f1": 0.7517,
-        "ms_per_question": 0.637
+        "accuracy": 0.8129,
+        "macro_f1": 0.8456,
+        "ms_per_question": 0.376
       },
       "heldout": {
-        "accuracy": 0.8061,
-        "macro_f1": 0.8022,
-        "ms_per_question": 0.189
+        "accuracy": 0.8545,
+        "macro_f1": 0.862,
+        "ms_per_question": 0.113
       }
     },
     "tfidf_linearsvc": {
       "val": {
-        "accuracy": 0.9206,
-        "macro_f1": 0.9085,
-        "ms_per_question": 0.131
+        "accuracy": 0.8503,
+        "macro_f1": 0.8636,
+        "ms_per_question": 0.136
       },
       "heldout": {
-        "accuracy": 0.8265,
-        "macro_f1": 0.8357,
-        "ms_per_question": 0.168
+        "accuracy": 0.8273,
+        "macro_f1": 0.8463,
+        "ms_per_question": 0.183
       }
     }
   },
   "threshold": {
     "threshold": 0.9,
-    "val_precision": 0.9861,
-    "val_coverage": 0.2857
+    "val_precision": 0.9878,
+    "val_coverage": 0.2789
   },
   "final_heldout": {
-    "accuracy": 0.8673,
-    "macro_f1": 0.8732,
-    "ms_per_question": 0.178,
+    "accuracy": 0.8727,
+    "macro_f1": 0.8883,
+    "ms_per_question": 0.165,
     "routing": {
-      "coverage": 0.449,
+      "coverage": 0.3727,
       "precision_when_trusted": 1.0
     }
   },
   "per_class": {
     "chat": {
       "precision": 1.0,
-      "recall": 0.9090909090909091,
-      "f1-score": 0.9523809523809523,
+      "recall": 0.9545454545454546,
+      "f1-score": 0.9767441860465116,
       "support": 22.0
+    },
+    "forecast": {
+      "precision": 1.0,
+      "recall": 0.9166666666666666,
+      "f1-score": 0.9565217391304348,
+      "support": 12.0
     },
     "python": {
       "precision": 0.7241379310344828,
@@ -61,15 +67,20 @@
       "support": 19.0
     },
     "sql": {
-      "precision": 0.9629629629629629,
-      "recall": 0.7428571428571429,
-      "f1-score": 0.8387096774193549,
+      "precision": 0.9259259259259259,
+      "recall": 0.7142857142857143,
+      "f1-score": 0.8064516129032258,
       "support": 35.0
     }
   },
   "heldout_errors": [
     {
       "text": "produk apa yang paling laku",
+      "label": "sql",
+      "predicted": "python"
+    },
+    {
+      "text": "bulan apa penjualan paling jeblok?",
       "label": "sql",
       "predicted": "python"
     },
@@ -119,11 +130,6 @@
       "predicted": "sql"
     },
     {
-      "text": "test",
-      "label": "chat",
-      "predicted": "python"
-    },
-    {
       "text": "apakah data saya dipakai untuk melatih model",
       "label": "chat",
       "predicted": "python"
@@ -132,8 +138,13 @@
       "text": "cabang dengan omzet di bawah 10 juta",
       "label": "sql",
       "predicted": "python"
+    },
+    {
+      "text": "kalau trennya begini terus akhir tahun dapat berapa",
+      "label": "forecast",
+      "predicted": "sql"
     }
   ],
   "artifact": "backend/models/intent.joblib",
-  "artifact_kb": 253.6
+  "artifact_kb": 358.4
 }

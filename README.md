@@ -2,7 +2,7 @@
 
 Asisten analisis data berbasis AI agent. User mengunggah CSV/Excel, lalu bertanya dalam Bahasa Indonesia; agent menulis SQL/Python, menjalankannya dengan aman, dan menjawab dengan tabel, grafik, dan insight.
 
-> Status: **Fase 3a (Model ML)**: agent LangGraph (Text-to-SQL + Python sandbox + guardrail) dengan router intent scikit-learn dan analisis sentimen IndoBERT (PyTorch, ONNX int8). Forecasting LSTM (TensorFlow) dan benchmark optimasi menyusul.
+> Status: **Fase 3 (Model ML) selesai**: agent LangGraph dengan 5 jalur (SQL, Python sandbox, sentimen IndoBERT, forecasting LSTM, obrolan), router intent scikit-learn, dan ketiga framework (Scikit-learn, PyTorch, TensorFlow) terpakai. Berikutnya: optimasi, CI/CD, monitoring, deploy.
 
 ## Cara kerja agent
 
@@ -11,36 +11,50 @@ pertanyaan ─► route ─┬─ sql ───────► generate_sql ─�
    (model ML; Claude │                    ▲                              │
     jika ragu)      │                    └──── error: perbaiki (maks 3) ┤
                      ├─ python ────► generate_python ─► execute_python ─┤
-                     ├─ sentiment ─► analyze_sentiment (model SmSA) ─────┘
+                     ├─ sentiment ─► analyze_sentiment (IndoBERT) ───────┘
+                     ├─ forecast ──► run_forecast (LSTM vs baseline, backtest) ─► jawaban
                      └─ chat ──────► answer_chat
 ```
 
 - **Guardrail SQL** (sqlglot): hanya satu `SELECT` pada tabel `data`, tanpa DDL/DML, tanpa fungsi baca file.
 - **DuckDB read-only**: akses file eksternal dimatikan dan konfigurasinya dikunci, query dihentikan setelah 15 detik.
 - **Python sandbox**: container terpisah tanpa internet, filesystem read-only, non-root, tanpa capability; setiap eksekusi berjalan di subprocess baru dengan batas CPU 30 detik, RAM 1,5 GB, dan file 10 MB.
+- **Forecast service**: container TensorFlow terpisah tanpa internet dan read-only; hanya menerima deret angka hasil agregasi, bukan data mentah.
 - **Streaming**: setiap langkah agent (intent, kode, tabel, grafik, jawaban) dikirim lewat SSE dan disimpan agar riwayat chat tampil sama persis.
 
 ## Model ML
 
 | Model | Framework | Tugas | Hasil |
 | --- | --- | --- | --- |
-| Intent router | Scikit-learn (TF-IDF kata + karakter, LinearSVC terkalibrasi) | Memilih jalur agent tanpa memanggil LLM | Akurasi 86.7% pada 98 pertanyaan tulisan tangan; di atas ambang 0.9 menangani 45% pertanyaan dengan presisi 100%, sisanya ke LLM; ~0,2 ms/pertanyaan |
+| Intent router | Scikit-learn (TF-IDF kata + karakter, LinearSVC terkalibrasi) | Memilih 1 dari 5 jalur agent tanpa memanggil LLM | Akurasi 87,3% pada 110 pertanyaan tulisan tangan; di atas ambang 0.9 menangani 37% pertanyaan dengan presisi 100%; ~5 ms/pertanyaan |
 | Sentimen (baseline) | Scikit-learn (TF-IDF + Logistic Regression) | Analisis sentimen kolom teks | IndoNLU SmSA: akurasi 88.6%, macro-F1 0.856; ~0,4 ms/teks |
 | Sentimen (IndoBERT) | PyTorch (fine-tune) + ONNX Runtime int8 | Dipakai agent untuk analisis sentimen | IndoNLU SmSA: akurasi 94,2%, macro-F1 0,919 (baseline 88,7% / 0,856). Kuantisasi int8: 498 MB menjadi 125 MB tanpa penurunan akurasi, 164 ms menjadi 131 ms per teks di CPU 2 thread |
+| Forecasting | TensorFlow/Keras (LSTM) vs baseline naive | Prediksi deret waktu dari data user | Pemenang dipilih lewat backtest di setiap permintaan; lihat benchmark di bawah |
 
 Catatan metodologi:
-- Data intent dibuat dari template (`ml/intent/generate.py`). Pemilihan model dan ambang confidence memakai *template yang disisihkan* (GroupShuffleSplit), bukan test set, sehingga 98 pertanyaan manual (`ml/intent/heldout.csv`) tetap menjadi data yang belum pernah dilihat.
+- Data intent dibuat dari template (`ml/intent/generate.py`). Pemilihan model dan ambang confidence memakai *template yang disisihkan* (GroupShuffleSplit), bukan test set, sehingga 110 pertanyaan manual (`ml/intent/heldout.csv`) tetap menjadi data yang belum pernah dilihat.
 - Label test SmSA resmi disembunyikan, jadi split validasi resmi (1.260 teks) dipakai sebagai test set.
-- Benchmark router pada 98 pertanyaan yang sama (`ml/benchmark_router.py`, laporan di `ml/reports/router_benchmark.json`):
+- Benchmark router pada 110 pertanyaan yang sama (`ml/benchmark_router.py`, laporan di `ml/reports/router_benchmark.json`):
 
   | Router | Akurasi | Latensi |
   | --- | --- | --- |
-  | Model ML (scikit-learn) | 86,7% | ~5 ms |
-  | LLM lokal Qwen2.5-Coder 3B | 57,1% | ~1.900 ms |
-  | ML, ke Qwen jika ragu | 71,4% | - |
+  | Model ML (scikit-learn) | 87,3% | ~5 ms |
+  | LLM lokal Qwen2.5-Coder 3B | 60,9% | ~1.600 ms |
+  | ML, ke Qwen jika ragu | 72,7% | - |
 
   Karena Qwen 3B lebih lemah dari classifier, router hanya bertanya ke LLM saat Claude API aktif; dengan LLM lokal saja, classifier selalu memutuskan.
 - IndoBERT ~90 ms per teks di CPU, jadi untuk kolom di atas 300 teks agent menganalisis sampel acak 300 teks dan menyebutkannya di jawaban; baseline scikit-learn (0,7 ms per teks) menganalisis sampai 5.000 teks.
+- Benchmark forecasting pada dataset publik (`ml/benchmark_forecast.py`, rolling origin 3 titik potong, MAE; makin kecil makin baik):
+
+  | Dataset | Naive | Moving average | Seasonal naive | LSTM | Terbaik |
+  | --- | --- | --- | --- | --- | --- |
+  | Penumpang pesawat bulanan (144 titik) | 73,22 | 57,34 | 35,92 | 18,65 | lstm |
+  | Penjualan mobil bulanan (108 titik) | 3.615,42 | 3.243,18 | 1.461,72 | 2.854,97 | seasonal_naive |
+  | Kelahiran harian (365 titik) | 5,81 | 6,94 | 7,86 | 6,76 | naive |
+  | Suhu minimum harian (600 titik terakhir) | 2,47 | 2 | 2,52 | 2,34 | moving_average |
+
+  LSTM unggul jelas hanya pada deret dengan tren kuat dan pola musiman (galat 48% lebih kecil dari baseline terbaik), dan kalah di tiga lainnya. Karena itu service tidak mengasumsikan LSTM terbaik: setiap permintaan menyisihkan periode terakhir, menguji semua kandidat, lalu memakai yang galatnya terkecil. LSTM tidak di-tuning terhadap dataset benchmark ini.
+- Jawaban prediksi disusun langsung dari angka hasil model, tanpa LLM, sehingga tidak ada angka yang dikarang.
 - Semua eksperimen tercatat di MLflow (`ml/mlflow.db`): `cd ml && .venv/bin/mlflow ui --backend-store-uri sqlite:///mlflow.db`.
 
 Melatih ulang:
@@ -68,6 +82,8 @@ backend/                FastAPI
   models/               model terlatih (intent, sentimen)
   tests/
 sandbox/                service eksekusi Python terisolasi
+forecast/               service forecasting (TensorFlow LSTM vs baseline)
+samples/                data contoh sintetis untuk demo
 ml/                     data, training, laporan, MLflow, notebook Colab IndoBERT
 frontend/               Next.js: login, upload, chat streaming, tabel + grafik
 scripts/download_model.sh   unduh model LLM lokal (~2 GB)

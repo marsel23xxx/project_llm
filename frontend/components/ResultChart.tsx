@@ -75,6 +75,8 @@ export function ResultChart({ spec, table }: { spec: ChartSpec; table: TableEven
                   dataKey={key}
                   stroke={SERIES_COLORS[i]}
                   strokeWidth={2}
+                  // Forecast values are dashed so they never read as observed data.
+                  strokeDasharray={spec.dashed?.includes(key) ? "6 4" : undefined}
                   dot={data.length <= 24 ? { r: 4, strokeWidth: 2, stroke: "var(--chart-surface)", fill: SERIES_COLORS[i] } : false}
                   activeDot={{ r: 5, strokeWidth: 2, stroke: "var(--chart-surface)" }}
                   isAnimationActive={false}

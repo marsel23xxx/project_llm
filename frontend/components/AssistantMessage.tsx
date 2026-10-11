@@ -8,6 +8,7 @@ const INTENT_LABEL = {
   sql: "Query SQL",
   python: "Analisis Python",
   sentiment: "Analisis Sentimen",
+  forecast: "Prediksi",
   chat: "Obrolan",
 } as const;
 
@@ -17,6 +18,7 @@ function progressLabel(steps: AgentEvent[]): string {
   switch (last.type) {
     case "intent":
       if (last.value === "chat") return "Menyusun jawaban...";
+      if (last.value === "forecast") return "Melatih model prediksi dan menguji akurasinya...";
       return last.value === "sentiment" ? "Membaca dan menilai teks..." : "Menulis kode analisis...";
     case "code":
       return "Menjalankan kode...";

@@ -43,6 +43,7 @@ class Settings(BaseSettings):
 
     # Agent
     sandbox_url: str = "http://localhost:8001"
+    forecast_url: str = "http://localhost:8002"
     sql_timeout_seconds: float = 15.0
     max_result_rows: int = 1000
     agent_max_attempts: int = 3
