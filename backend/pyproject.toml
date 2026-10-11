@@ -25,6 +25,7 @@ dependencies = [
     "scikit-learn==1.9.1",
     "joblib>=1.4",
     "numpy>=2.0",
+    "reportlab>=4.2",
 ]
 
 [project.optional-dependencies]
@@ -36,6 +37,7 @@ onnx = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
+    "pypdf>=5.0",
 ]
 
 [build-system]

@@ -6,6 +6,7 @@ before the agent ever sees the data.
 """
 
 import csv
+import math
 import re
 from pathlib import Path
 
@@ -16,6 +17,8 @@ SUPPORTED_SUFFIXES = {".csv", ".xlsx"}
 TABLE_NAME = "data"
 
 _ID_NUMBER = re.compile(r"^-?(?:rp\.?\s?)?\d{1,3}(?:\.\d{3})+(?:,\d+)?$|^-?(?:rp\.?\s?)?\d+,\d+$", re.IGNORECASE)
+_PLAIN_INT = re.compile(r"^-?\d+$")
+_LEADING_ZERO_DECIMAL = re.compile(r"^-?0\.\d+$")
 _DATE_HINT = re.compile(r"tanggal|tgl|date|waktu|periode")
 # Share of non-null values that must match before a column is converted.
 _MATCH_THRESHOLD = 0.9
@@ -60,9 +63,19 @@ def normalize_indonesian_numbers(df: pd.DataFrame) -> pd.DataFrame:
         values = df[col].dropna().astype(str).str.strip()
         if values.empty:
             continue
-        if values.str.match(_ID_NUMBER).mean() >= _MATCH_THRESHOLD:
+        formatted = values.str.match(_ID_NUMBER)
+        # "830" next to "1.250" is still an Indonesian-formatted column; without counting the plain
+        # integers the column would fall through to a parser that reads 1.250 as 1.25.
+        # A value like "0.875" can only be a decimal, so its presence means dots are decimal points.
+        if (
+            formatted.any()
+            and (formatted | values.str.match(_PLAIN_INT)).mean() >= _MATCH_THRESHOLD
+            and not values.str.match(_LEADING_ZERO_DECIMAL).any()
+        ):
             df[col] = df[col].map(
-                lambda v: _parse_id_number(str(v)) if pd.notna(v) and _ID_NUMBER.match(str(v).strip()) else None
+                lambda v: _parse_id_number(str(v))
+                if pd.notna(v) and (_ID_NUMBER.match(str(v).strip()) or _PLAIN_INT.match(str(v).strip()))
+                else None
             ).astype("Float64")
     return df
 
@@ -86,18 +99,52 @@ def _sniff_delimiter(path: Path) -> str:
         return ","
 
 
+HEADER_SCAN_ROWS = 30
+
+
+def _csv_width(path: Path, delimiter: str) -> int:
+    with path.open("r", encoding="utf-8-sig", errors="replace", newline="") as f:
+        return max((len(row) for _, row in zip(range(200), csv.reader(f, delimiter=delimiter))), default=0)
+
+
+def promote_header(raw: pd.DataFrame) -> pd.DataFrame:
+    """Find the real header row in a sheet that starts with titles, notes or blank lines.
+
+    Office exports often look like: a merged title, a blank line, then the table. The header is
+    taken as the first row that is about as wide as the table itself; a normal file (header on
+    the first row) is unaffected.
+    """
+    raw = raw.dropna(axis=0, how="all").dropna(axis=1, how="all")
+    if raw.empty:
+        return raw
+    filled = raw.head(HEADER_SCAN_ROWS).notna().sum(axis=1)
+    wide_enough = max(2, math.ceil(0.6 * filled.max())) if raw.shape[1] > 1 else 1
+    header_pos = int((filled >= wide_enough).to_numpy().argmax())
+
+    header = ["" if pd.isna(v) else str(v) for v in raw.iloc[header_pos]]
+    body = raw.iloc[header_pos + 1 :].reset_index(drop=True)
+    body.columns = header
+    return body.dropna(axis=0, how="all")
+
+
 def load_dataframe(path: Path) -> pd.DataFrame:
     suffix = path.suffix.lower()
     if suffix not in SUPPORTED_SUFFIXES:
         raise IngestError(f"Format {suffix} belum didukung. Gunakan CSV atau XLSX.")
     try:
+        # Read without a header so title rows above the table cannot be mistaken for column names.
         if suffix == ".csv":
-            df = pd.read_csv(path, sep=_sniff_delimiter(path), encoding="utf-8-sig", dtype=str, keep_default_na=True)
+            delimiter = _sniff_delimiter(path)
+            raw = pd.read_csv(
+                path, sep=delimiter, encoding="utf-8-sig", dtype=str, header=None,
+                names=range(_csv_width(path, delimiter)), skip_blank_lines=False,
+            )  # fmt: skip
         else:
-            df = pd.read_excel(path, dtype=str)
+            raw = pd.read_excel(path, dtype=str, header=None)
     except Exception as exc:  # pandas raises many parser-specific types
         raise IngestError(f"File tidak bisa dibaca: {exc}") from exc
 
+    df = promote_header(raw)
     if df.empty or len(df.columns) == 0:
         raise IngestError("File tidak berisi data.")
 

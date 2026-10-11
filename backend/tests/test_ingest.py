@@ -46,3 +46,46 @@ def test_semicolon_csv_is_loaded_typed_and_profiled(tmp_path: Path):
     assert profile["row_count"] == 3
     assert {c["name"] for c in profile["columns"]} == {"tanggal", "produk", "qty", "total"}
     assert len(profile["sample"]) == 3
+
+
+def test_title_rows_above_the_table_are_skipped(tmp_path: Path):
+    xlsx = tmp_path / "linen.xlsx"
+    rows = [
+        ["REKAP PENERIMAAN DAN PENGIRIMAN LINEN", None, None, None],
+        ["Periode: September 2026", None, None, None],
+        [None, None, None, None],
+        ["No", "Nama Linen", "Jumlah Terima", "Tanggal"],
+        [1, "Sprei", "1.250", "01/09/2026"],
+        [2, "Selimut", "830", "02/09/2026"],
+        [3, "Sarung Bantal", "2.100", "03/09/2026"],
+    ]
+    pd.DataFrame(rows).to_excel(xlsx, header=False, index=False)
+    df = load_dataframe(xlsx)
+    assert list(df.columns) == ["no", "nama_linen", "jumlah_terima", "tanggal"]
+    assert len(df) == 3 and df["jumlah_terima"].sum() == 4180
+    assert pd.api.types.is_datetime64_any_dtype(df["tanggal"])
+
+
+def test_csv_with_title_line_and_blank_line(tmp_path: Path):
+    path = tmp_path / "laporan.csv"
+    path.write_text("Laporan Penjualan 2026\n\nProduk,Qty,Total\nKopi,3,54000\nTeh,5,40000\n", encoding="utf-8")
+    df = load_dataframe(path)
+    assert list(df.columns) == ["produk", "qty", "total"]
+    assert df["qty"].tolist() == [3, 5]
+
+
+def test_header_cell_left_blank_gets_a_placeholder_name(tmp_path: Path):
+    path = tmp_path / "kosong.csv"
+    path.write_text("Nama,,Nilai\nA,x,1\nB,y,2\n", encoding="utf-8")
+    assert list(load_dataframe(path).columns) == ["nama", "kolom_2", "nilai"]
+
+
+def test_thousands_dots_mixed_with_plain_integers():
+    df = normalize_indonesian_numbers(pd.DataFrame({"jumlah": ["1.250", "830", "2.100", "45"]}))
+    assert df["jumlah"].tolist() == [1250.0, 830.0, 2100.0, 45.0]
+
+
+def test_real_decimals_are_not_read_as_thousands():
+    df = pd.DataFrame({"rasio": ["1.250", "0.875", "2.100"]})
+    out = normalize_indonesian_numbers(df.copy())
+    assert out["rasio"].tolist() == ["1.250", "0.875", "2.100"]  # left for the plain numeric parser

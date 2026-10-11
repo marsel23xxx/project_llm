@@ -20,6 +20,8 @@ pertanyaan ─► route ─┬─ sql ───────► generate_sql ─�
 - **DuckDB read-only**: akses file eksternal dimatikan dan konfigurasinya dikunci, query dihentikan setelah 15 detik.
 - **Python sandbox**: container terpisah tanpa internet, filesystem read-only, non-root, tanpa capability; setiap eksekusi berjalan di subprocess baru dengan batas CPU 30 detik, RAM 1,5 GB, dan file 10 MB.
 - **Forecast service**: container TensorFlow terpisah tanpa internet dan read-only; hanya menerima deret angka hasil agregasi, bukan data mentah.
+- **Laporan PDF**: setiap jawaban bisa diunduh sebagai PDF (pertanyaan, jawaban, grafik, tabel, cara perhitungan) yang dibuat server dari langkah agent yang tersimpan, bukan oleh LLM. Permintaan seperti "buatkan dalam PDF" dijawab normal lalu diarahkan ke tombol ini.
+- **Ringkasan dataset**: pertanyaan "ringkas isi data ini" dijawab dari profil kolom tanpa LLM.
 - **Streaming**: setiap langkah agent (intent, kode, tabel, grafik, jawaban) dikirim lewat SSE dan disimpan agar riwayat chat tampil sama persis.
 
 ## Model ML
@@ -139,11 +141,12 @@ Gunakan `local` selama development. Isi `ANTHROPIC_API_KEY` dan pasang spend lim
 | POST | `/api/v1/datasets` | Upload CSV/XLSX (maks 50 MB), return profil kolom |
 | GET | `/api/v1/datasets` | Daftar dataset milik user |
 | GET | `/api/v1/datasets/{id}/profile` | Statistik kolom + sampel baris |
-| DELETE | `/api/v1/datasets/{id}` | Hapus dataset |
+| DELETE | `/api/v1/datasets/{id}` | Hapus dataset beserta percakapannya |
 | POST | `/api/v1/chat/sessions` | Buat sesi chat untuk satu dataset |
 | GET | `/api/v1/chat/sessions` | Daftar sesi |
 | GET | `/api/v1/chat/sessions/{id}` | Riwayat pesan beserta langkah agent |
 | POST | `/api/v1/chat/sessions/{id}/messages` | Kirim pertanyaan, jawaban di-stream (SSE); kuota harian per user |
+| GET | `/api/v1/chat/messages/{id}/pdf` | Unduh laporan PDF untuk satu jawaban |
 | GET | `/api/v1/health` | Status database, redis, mode LLM |
 
 ## Tes

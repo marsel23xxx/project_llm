@@ -1,13 +1,14 @@
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession, RedisClient
@@ -20,12 +21,29 @@ from app.services.agent import prompts
 from app.services.agent.executor import run_sql
 from app.services.agent.graph import stream_agent
 from app.services.llm.base import LLMError
+from app.services.report import build_pdf
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 SAMPLE_ROWS = 3
 QUOTA_TTL_SECONDS = 2 * 86400
+
+# The agent cannot write files. A request such as "... dalam bentuk pdf" is answered normally and
+# pointed at the report button, instead of letting the LLM try to generate a PDF in the sandbox.
+_EXPORT_REQUEST = re.compile(
+    r"\b(?:(?:dengan|dalam|ke|jadi|menjadi|sebagai|format|bentuk|file|berupa|via|lewat)\s+)*"
+    r"(?:pdf|excel|xlsx|csv|word|docx|powerpoint|ppt)\b|\b(?:unduh|download|export|ekspor|cetak|print)\b",
+    re.IGNORECASE,
+)
+EXPORT_HINT = "Untuk menyimpannya sebagai file, gunakan tombol Unduh PDF di bawah jawaban ini."
+
+
+def split_export_request(question: str) -> tuple[str, bool]:
+    """Return the question without the file-export wording, and whether such wording was present."""
+    cleaned = re.sub(r"\s{2,}", " ", _EXPORT_REQUEST.sub(" ", question)).strip(" ,.")
+    wants_file = cleaned != question.strip(" ,.")
+    return (cleaned if len(cleaned) >= 3 else question), wants_file
 
 
 async def _get_session(db: DbSession, user: CurrentUser, session_id: uuid.UUID) -> ChatSession:
@@ -58,11 +76,14 @@ def _history_text(messages: list[Message]) -> str:
     return "\n".join(lines)
 
 
-async def _save_reply(session_id: uuid.UUID, answer: str, steps: list, usage: list, latency_ms: int) -> None:
+async def _save_reply(
+    message_id: uuid.UUID, session_id: uuid.UUID, answer: str, steps: list, usage: list, latency_ms: int
+) -> None:
     # The request-scoped DB session may already be closed once streaming starts.
     async with SessionLocal() as db:
         db.add(
             Message(
+                id=message_id,
                 session_id=session_id,
                 role="assistant",
                 content=answer,
@@ -144,7 +165,9 @@ async def send_message(
     await db.commit()
 
     agent = request.app.state.agent
-    initial = {"question": body.content, "context": context, "db_path": dataset.duckdb_path, "usage": []}
+    question, wants_file = split_export_request(body.content)
+    initial = {"question": question, "context": context, "db_path": dataset.duckdb_path, "usage": []}
+    message_id = uuid.uuid4()
 
     async def event_stream():
         started = time.monotonic()
@@ -155,9 +178,11 @@ async def send_message(
         try:
             try:
                 async for event, usage in stream_agent(agent, initial):
-                    steps.append(event)
                     if event["type"] == "answer":
+                        if wants_file:
+                            event = {**event, "text": f"{event['text']}\n\n{EXPORT_HINT}"}
                         answer = event["text"]
+                    steps.append(event)
                     yield _sse(event)
             except LLMError as exc:
                 logger.warning("LLM tidak tersedia untuk sesi %s: %s", session_id, exc)
@@ -178,11 +203,34 @@ async def send_message(
                 answer = answer or "Permintaan terputus sebelum selesai."
                 steps.append({"type": "error", "message": answer})
             latency_ms = int((time.monotonic() - started) * 1000)
-            await asyncio.shield(_save_reply(session_id, answer, steps, usage, latency_ms))
-        yield _sse({"type": "done", "latency_ms": latency_ms, "usage": usage})
+            await asyncio.shield(_save_reply(message_id, session_id, answer, steps, usage, latency_ms))
+        yield _sse({"type": "done", "message_id": str(message_id), "latency_ms": latency_ms, "usage": usage})
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get("/messages/{message_id}/pdf")
+async def message_pdf(message_id: uuid.UUID, user: CurrentUser, db: DbSession) -> Response:
+    message = await db.get(Message, message_id)
+    session = await db.get(ChatSession, message.session_id) if message else None
+    if message is None or message.role != "assistant" or session is None or session.user_id != user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Jawaban tidak ditemukan")
+
+    question = await db.scalar(
+        select(Message.content)
+        .where(Message.session_id == session.id, Message.role == "user", Message.created_at <= message.created_at)
+        .order_by(Message.created_at.desc())
+        .limit(1)
+    )
+    pdf = await asyncio.to_thread(
+        build_pdf, question or "-", message.content, message.steps_json, session.title, message.created_at
+    )
+    return Response(
+        pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="laporan-{str(message_id)[:8]}.pdf"'},
     )

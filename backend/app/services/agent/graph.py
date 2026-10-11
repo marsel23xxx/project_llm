@@ -7,6 +7,7 @@
            │                                             └─► fail (after max attempts)
            ├─ sentiment ► analyze_sentiment ─────────────────► summarize (or explain why not)
            ├─ forecast ─► run_forecast (LSTM vs baselines, answer built from the numbers)
+           ├─ profile ──► describe_dataset (column profile, no LLM; chosen by a rule)
            └─ chat ─────► answer_chat
 
 `route` asks the trained intent classifier first and only calls the LLM when it is unsure.
@@ -28,6 +29,7 @@ from app.ml.models import MLModels
 from app.services.agent import prompts
 from app.services.agent.charts import suggest_chart
 from app.services.agent import forecast as forecasting
+from app.services.agent import profile as profiling
 from app.services.agent.executor import ExecutionError, QueryResult, run_sql
 from app.services.agent.guardrail import GuardrailError, validate_sql
 from app.services.agent.sandbox_client import run_python
@@ -36,7 +38,7 @@ from app.services.agent.sentiment import analyze as analyze_text_sentiment
 from app.services.llm.base import LLMError, LLMResult
 from app.services.llm.router import LLMRouter
 
-Intent = Literal["sql", "python", "sentiment", "forecast", "chat"]
+Intent = Literal["sql", "python", "sentiment", "forecast", "profile", "chat"]
 SUMMARY_ROWS = 20
 
 _CODE_BLOCK = re.compile(r"```(?:sql|python|py)?\s*\n?(.*?)```", re.DOTALL | re.IGNORECASE)
@@ -104,6 +106,8 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
     sentiment_model = ml.sentiment if ml else None
 
     async def route(state: AgentState) -> dict:
+        if profiling.is_overview_question(state["question"]):
+            return {"intent": "profile", "attempts": 0, "usage": [{"step": "route", "provider": "rule", "model": "overview"}]}
         kind = "simple"
         if intent_model:
             pred = intent_model.predict(state["question"])
@@ -191,6 +195,10 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
         finished["result"]["stdout"] = note
         return {**finished, "chart": chart, "answer": answer}
 
+    async def describe_dataset(state: AgentState) -> dict:
+        table, answer = await asyncio.to_thread(profiling.describe, Path(state["db_path"]))
+        return {**_finish(table), "chart": None, "answer": answer}
+
     async def summarize(state: AgentState) -> dict:
         content = f"Pertanyaan: {state['question']}\n\n<hasil>\n{_result_for_prompt(state['result'])}\n</hasil>"
         try:
@@ -223,6 +231,7 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
     graph.add_node("summarize", summarize)
     graph.add_node("analyze_sentiment", analyze_sentiment)
     graph.add_node("run_forecast", run_forecast)
+    graph.add_node("describe_dataset", describe_dataset)
     graph.add_node("answer_chat", answer_chat)
     graph.add_node("fail", fail)
 
@@ -230,7 +239,7 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
     graph.add_conditional_edges(
         "route",
         lambda s: s["intent"],
-        {"sql": "generate_sql", "python": "generate_python", "sentiment": "analyze_sentiment", "forecast": "run_forecast", "chat": "answer_chat"},
+        {"sql": "generate_sql", "python": "generate_python", "sentiment": "analyze_sentiment", "forecast": "run_forecast", "profile": "describe_dataset", "chat": "answer_chat"},
     )
     graph.add_conditional_edges(
         "analyze_sentiment", lambda s: END if s.get("answer") else "summarize", ["summarize", END]
@@ -241,7 +250,7 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
     graph.add_conditional_edges(
         "execute_python", after_execute("generate_python"), ["generate_python", "summarize", "fail"]
     )
-    for terminal in ("summarize", "answer_chat", "fail", "run_forecast"):
+    for terminal in ("summarize", "answer_chat", "fail", "run_forecast", "describe_dataset"):
         graph.add_edge(terminal, END)
     return graph.compile()
 
@@ -252,7 +261,7 @@ def _events_for(node: str, update: dict) -> list[dict]:
     if node in ("generate_sql", "generate_python"):
         language = "sql" if node == "generate_sql" else "python"
         return [{"type": "code", "language": language, "value": update["code"], "attempt": update["attempts"]}]
-    if node in ("execute_sql", "execute_python", "analyze_sentiment", "run_forecast"):
+    if node in ("execute_sql", "execute_python", "analyze_sentiment", "run_forecast", "describe_dataset"):
         if update.get("error"):
             return [{"type": "retry", "error": update["error"]}]
         events = []

@@ -12,6 +12,30 @@ Internet ──► Nginx (host, port 80/443, SSL dari Certbot)
 backend ──► postgres, redis, llm (Qwen), sandbox, forecast   (jaringan Docker, tidak terbuka ke internet)
 ```
 
+## 0. Cek dulu sebelum mulai
+
+Tiga hal ini menghemat banyak waktu jika VPS sudah dipakai proyek lain atau memakai CPU virtual generik.
+
+```bash
+# a. CPU harus punya AVX dan SSE4.2 (dibutuhkan NumPy dan TensorFlow). Keduanya harus > 0.
+grep -cE " avx " /proc/cpuinfo; grep -c sse4_2 /proc/cpuinfo
+lscpu | grep "Model name"
+```
+
+Jika hasilnya 0 dan model bertuliskan "QEMU Virtual CPU" atau "Common KVM processor", minta penyedia VPS
+mengubah **CPU type menjadi host** (host-passthrough), lalu Stop dan Start VPS dari panel. AVX2 tidak wajib.
+
+```bash
+# b. Port yang sudah terpakai (Docker maupun bukan). Aplikasi ini butuh satu port untuk backend dan satu untuk frontend.
+ss -ltnH | awk '{print $4}' | grep -oE '[0-9]+$' | sort -n | uniq | tr '\n' ' '
+```
+
+Jika 8000 atau 3000 sudah terpakai, pilih port kosong dan set `BACKEND_PORT` / `FRONTEND_PORT` di `.env`
+(langkah 4), lalu pakai port yang sama di konfigurasi Nginx (langkah 7).
+
+c. Jika masuk ke VPS lewat alias di `~/.ssh/config` (misalnya `ssh ropi`), pakai alias itu juga untuk `scp`/`rsync`,
+dan buka port SSH yang benar di firewall sebelum `ufw enable` jika port-nya bukan 22.
+
 ## 1. Arahkan domain ke VPS
 
 Di panel DNS domainmu, buat **A record**: nama `@` (atau subdomain seperti `analyst`), nilai `IP_VPS`.
@@ -76,7 +100,7 @@ pertama kali jalan: password lama sudah tersimpan di volume database.
 Model IndoBERT (125 MB) tidak ada di git. Kirim dari **laptop** (terminal baru, bukan di dalam SSH):
 
 ```bash
-scp ~/Downloads/sentiment_onnx.zip root@IP_VPS:/tmp/
+rsync -avP ~/Downloads/sentiment_onnx.zip root@IP_VPS:/tmp/   # bisa dilanjutkan jika terputus
 ```
 
 Lalu di VPS:
@@ -107,6 +131,8 @@ docker compose logs backend | grep "Model ML"   # sentimen=onnx:indobert-int8
 
 ```bash
 sed "s/DOMAIN_KAMU/analyst.contoh.com/" deploy/nginx.conf > /etc/nginx/sites-available/agentic-data-analyst   # ganti domainnya
+# Jika memakai port selain 8000/3000, sesuaikan kedua baris proxy_pass di file itu.
+curl -s localhost:3000/login | grep -o "<title>[^<]*"   # harus "Agentic Data Analyst", bukan aplikasi lain
 ln -sf /etc/nginx/sites-available/agentic-data-analyst /etc/nginx/sites-enabled/
 nginx -t && systemctl reload nginx
 

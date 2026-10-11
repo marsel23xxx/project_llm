@@ -2,13 +2,16 @@
 
 import { DataTable } from "@/components/DataTable";
 import { ResultChart } from "@/components/ResultChart";
-import type { AgentEvent, TableEvent } from "@/lib/api";
+import { useState } from "react";
+
+import { downloadReport, type AgentEvent, type TableEvent } from "@/lib/api";
 
 const INTENT_LABEL = {
   sql: "Query SQL",
   python: "Analisis Python",
   sentiment: "Analisis Sentimen",
   forecast: "Prediksi",
+  profile: "Ringkasan Dataset",
   chat: "Obrolan",
 } as const;
 
@@ -29,7 +32,25 @@ function progressLabel(steps: AgentEvent[]): string {
   }
 }
 
-export function AssistantMessage({ steps, pending }: { steps: AgentEvent[]; pending: boolean }) {
+type Props = { steps: AgentEvent[]; pending: boolean; messageId?: string };
+
+export function AssistantMessage({ steps, pending, messageId }: Props) {
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  async function download() {
+    if (!messageId) return;
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      await downloadReport(messageId);
+    } catch {
+      setDownloadError("Laporan gagal dibuat. Coba lagi.");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   const intent = steps.find((s) => s.type === "intent");
   const answer = steps.find((s) => s.type === "answer");
   const error = steps.find((s) => s.type === "error");
@@ -38,6 +59,7 @@ export function AssistantMessage({ steps, pending }: { steps: AgentEvent[]; pend
   const value = steps.findLast((s) => s.type === "value");
   const samples = steps.findLast((s) => s.type === "samples");
   const process = steps.filter((s) => s.type === "code" || s.type === "retry" || s.type === "stdout");
+  const attempts = process.filter((s) => s.type === "code").length;
 
   return (
     <div className="space-y-3">
@@ -94,7 +116,7 @@ export function AssistantMessage({ steps, pending }: { steps: AgentEvent[]; pend
       {process.length > 0 && (
         <details className="rounded-lg border border-border text-sm">
           <summary className="cursor-pointer px-3 py-2 text-muted">
-            Lihat proses agent ({process.filter((s) => s.type === "code").length} percobaan kode)
+            {attempts > 0 ? `Lihat proses agent (${attempts} percobaan kode)` : "Lihat cara perhitungan"}
           </summary>
           <div className="space-y-2 border-t border-border p-3">
             {process.map((step, i) =>
@@ -117,6 +139,23 @@ export function AssistantMessage({ steps, pending }: { steps: AgentEvent[]; pend
             )}
           </div>
         </details>
+      )}
+
+      {messageId && answer && !pending && (
+        <div className="flex items-center gap-3 pt-1">
+          <button
+            onClick={download}
+            disabled={downloading}
+            className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:border-accent disabled:opacity-60"
+          >
+            {downloading ? "Menyiapkan PDF..." : "Unduh PDF"}
+          </button>
+          {downloadError && (
+            <span role="alert" className="text-xs text-red-600 dark:text-red-400">
+              {downloadError}
+            </span>
+          )}
+        </div>
       )}
     </div>
   );

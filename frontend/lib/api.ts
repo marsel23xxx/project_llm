@@ -21,7 +21,7 @@ export type TableEvent = {
 };
 
 export type AgentEvent =
-  | { type: "intent"; value: "sql" | "python" | "sentiment" | "forecast" | "chat" }
+  | { type: "intent"; value: "sql" | "python" | "sentiment" | "forecast" | "profile" | "chat" }
   | { type: "code"; language: "sql" | "python"; value: string; attempt: number }
   | { type: "retry"; error: string }
   | TableEvent
@@ -31,7 +31,7 @@ export type AgentEvent =
   | { type: "samples"; items: { label: string; text: string }[] }
   | { type: "answer"; text: string }
   | { type: "error"; message: string }
-  | { type: "done"; latency_ms: number };
+  | { type: "done"; latency_ms: number; message_id?: string };
 
 export type StoredMessage = {
   id: string;
@@ -91,6 +91,7 @@ export const api = {
   logout: () => request<void>("/auth/logout", { method: "POST" }),
 
   datasets: () => request<Dataset[]>("/datasets"),
+  deleteDataset: (id: string) => request<void>(`/datasets/${id}`, { method: "DELETE" }),
   upload: (file: File) => {
     const form = new FormData();
     form.append("file", file);
@@ -126,4 +127,16 @@ export async function streamMessage(sessionId: string, content: string, onEvent:
       }
     }
   }
+}
+
+/** Fetch the PDF report for one stored answer and hand it to the browser as a download. */
+export async function downloadReport(messageId: string) {
+  const res = await send(`/chat/messages/${messageId}/pdf`, { method: "GET" });
+  if (!res.ok) throw await errorFrom(res);
+  const url = URL.createObjectURL(await res.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `laporan-${messageId.slice(0, 8)}.pdf`;
+  link.click();
+  URL.revokeObjectURL(url);
 }
