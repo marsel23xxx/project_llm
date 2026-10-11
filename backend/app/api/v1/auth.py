@@ -35,7 +35,13 @@ def _set_auth_cookies(response: Response, user: User) -> None:
 
 
 @router.post("/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterRequest, db: DbSession) -> User:
+async def register(body: RegisterRequest, request: Request, db: DbSession, redis: RedisClient) -> User:
+    settings = get_settings()
+    if not settings.registration_open:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Pendaftaran akun baru sedang ditutup")
+    client_ip = request.client.host if request.client else "unknown"
+    if not await rate_limit.hit(redis, f"register:{client_ip}", settings.register_max_per_hour, 3600):
+        raise HTTPException(status.HTTP_429_TOO_MANY_REQUESTS, "Terlalu banyak pendaftaran, coba lagi nanti")
     email = body.email.lower()
     if await db.scalar(select(User).where(User.email == email)):
         raise HTTPException(status.HTTP_409_CONFLICT, "Email sudah terdaftar")

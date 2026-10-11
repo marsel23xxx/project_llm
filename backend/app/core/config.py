@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     refresh_token_days: int = 7
     login_max_attempts: int = 5
     login_window_seconds: int = 900
+    registration_open: bool = True
+    register_max_per_hour: int = 5
 
     # Data upload
     data_dir: str = "/data"
