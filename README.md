@@ -84,22 +84,25 @@ backend/                FastAPI
 sandbox/                service eksekusi Python terisolasi
 forecast/               service forecasting (TensorFlow LSTM vs baseline)
 samples/                data contoh sintetis untuk demo
+deploy/                 panduan deploy VPS dan konfigurasi Nginx
 ml/                     data, training, laporan, MLflow, notebook Colab IndoBERT
 frontend/               Next.js: login, upload, chat streaming, tabel + grafik
 scripts/download_model.sh   unduh model LLM lokal (~2 GB)
-docker-compose.yml          postgres (pgvector), redis, llm, backend
+docker-compose.yml          postgres (pgvector), redis, llm, backend, sandbox, forecast, frontend
 ```
 
 ## Menjalankan
 
 ```bash
 cp .env.example .env          # lalu ganti JWT_SECRET dan POSTGRES_PASSWORD
-docker compose up -d --build  # postgres, redis, backend
+docker compose up -d --build  # postgres, redis, backend, sandbox, forecast, frontend
 ```
 
-API berjalan di http://localhost:8000 (atau `BACKEND_PORT`) dengan dokumentasi interaktif di `/docs`.
+Aplikasi berjalan di http://localhost:3000 (`FRONTEND_PORT`), API di http://localhost:8000 (`BACKEND_PORT`) dengan dokumentasi interaktif di `/docs`.
 
-Frontend (development):
+Deploy ke VPS dengan Nginx dan HTTPS: lihat [deploy/DEPLOY.md](deploy/DEPLOY.md).
+
+Frontend dengan hot reload (development):
 
 ```bash
 cd frontend
