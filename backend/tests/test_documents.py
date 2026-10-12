@@ -149,3 +149,63 @@ async def test_question_with_no_matching_text_does_not_call_the_llm(policy_pdf):
     agent = build_agent(llm, Settings())
     events = [e async for e, _ in stream_agent(agent, _state(policy_pdf, "zzzz qqqq xxxx wwww"))]
     assert events[-1]["text"].startswith("Saya tidak menemukan") and llm.requests == []
+
+
+class HostedLLM(RecordingLLM):
+    has_strong_model = True
+
+
+@pytest.mark.parametrize(
+    ("question", "intent"),
+    [
+        ("apa saran kamu terhadap dokumen operasional ini??", "doc_analysis"),  # was misrouted to small talk
+        ("apa kelemahan sop ini", "doc_analysis"),
+        ("ringkas dokumen ini", "doc_summary"),
+        ("berapa tarif linen infeksius?", "doc_qa"),
+        ("halo, dokumen ini tentang apa", "doc_summary"),
+        ("halo", "chat"),
+        ("terima kasih banyak ya", "chat"),
+    ],
+)
+async def test_document_session_routing(policy_pdf, question, intent):
+    agent = build_agent(RecordingLLM("ok"), Settings())
+    events = [e async for e, _ in stream_agent(agent, _state(policy_pdf, question))]
+    assert events[0] == {"type": "intent", "value": intent}
+
+
+def test_page_texts_removes_overlap_duplicates():
+    words = [f"kata{i}" for i in range(400)]
+    chunks = documents.chunk_pages([" ".join(words), "halaman dua pendek"])
+    pages = documents.page_texts(chunks)
+    assert pages[0] == (1, " ".join(words)) and pages[1] == (2, "halaman dua pendek")
+    assert documents.word_count(chunks) == 403
+
+
+async def test_hosted_model_reads_the_whole_document(policy_pdf):
+    llm = HostedLLM("**Saran:** perjelas tenggat pelaporan (hal. 3).")
+    agent = build_agent(llm, Settings())
+    state = _state(policy_pdf, "apa saran kamu terhadap dokumen operasional ini??", file_note="File aktif")
+    events = [e async for e, _ in stream_agent(agent, state)]
+
+    assert [e["type"] for e in events] == ["intent", "stdout", "answer"]
+    assert events[1]["value"] == "Jawaban dibuat dari seluruh dokumen (4 halaman)."
+    request = llm.requests[0]
+    assert all(f'<kutipan halaman="{n}">' in request for n in (1, 2, 3, 4))
+    assert request.index("<kutipan") < request.index("Pertanyaan:")  # document first: cacheable prefix
+    assert "Seluruh isi dokumen" in llm.systems[0]
+
+
+async def test_hosted_model_falls_back_to_retrieval_for_very_long_documents(policy_pdf):
+    llm = HostedLLM("Rp 7.000 (hal. 4).")
+    agent = build_agent(llm, Settings(doc_full_context_words=50))
+    events = [e async for e, _ in stream_agent(agent, _state(policy_pdf, "berapa tarif linen infeksius?"))]
+    assert [e["type"] for e in events] == ["intent", "sources", "answer"]
+    assert "Seluruh isi dokumen" not in llm.systems[0]
+
+
+async def test_small_talk_in_a_document_session_knows_a_file_is_open(policy_pdf):
+    llm = RecordingLLM("Halo! Silakan tanya tentang dokumennya.")
+    agent = build_agent(llm, Settings())
+    state = _state(policy_pdf, "halo", file_note='File aktif di sesi ini: dokumen PDF "kebijakan.pdf" (4 halaman).')
+    [e async for e, _ in stream_agent(agent, state)]
+    assert "kebijakan.pdf" in llm.systems[0] and "jangan meminta user mengunggah lagi" in llm.systems[0]

@@ -65,6 +65,8 @@ class SessionOut(BaseModel):
     dataset_id: uuid.UUID
     title: str
     kind: str = "table"
+    # Rows for a table, pages for a document.
+    size: int = 0
     created_at: datetime
 
 

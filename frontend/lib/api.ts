@@ -13,6 +13,8 @@ export type ChatSession = {
   dataset_id: string;
   title: string;
   kind: "table" | "document";
+  /** Rows for a table, pages for a document. */
+  size: number;
   created_at: string;
 };
 
@@ -27,7 +29,7 @@ export type TableEvent = {
 };
 
 export type AgentEvent =
-  | { type: "intent"; value: "sql" | "python" | "sentiment" | "forecast" | "profile" | "doc_qa" | "doc_summary" | "chat" }
+  | { type: "intent"; value: "sql" | "python" | "sentiment" | "forecast" | "profile" | "doc_qa" | "doc_summary" | "doc_analysis" | "chat" }
   | { type: "code"; language: "sql" | "python"; value: string; attempt: number }
   | { type: "retry"; error: string }
   | TableEvent

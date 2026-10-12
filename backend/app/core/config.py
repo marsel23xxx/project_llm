@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     max_result_rows: int = 1000
     agent_max_attempts: int = 3
     history_messages: int = 6
+    # With a hosted LLM, documents up to this many words are sent whole with each question
+    # (about 35k tokens; larger ones fall back to retrieving passages).
+    doc_full_context_words: int = 20000
 
     # ML models (backend/models)
     models_dir: str = "models"

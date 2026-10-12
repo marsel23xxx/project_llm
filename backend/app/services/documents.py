@@ -109,3 +109,18 @@ def summary_excerpts(chunks: list[Chunk], limit: int = SUMMARY_EXCERPTS) -> tupl
     step = (len(chunks) - 1) / (limit - 1)
     picked = [chunks[round(i * step)] for i in range(limit)]
     return [Chunk(c.page, c.position, " ".join(c.text.split()[:SUMMARY_EXCERPT_WORDS])) for c in picked], True
+
+
+def page_texts(chunks: list[Chunk]) -> list[tuple[int, str]]:
+    """Rebuild each page's text from its chunks, dropping the words repeated by the overlap."""
+    pages: dict[int, list[str]] = {}
+    for chunk in sorted(chunks, key=lambda c: c.position):
+        words = chunk.text.split()
+        if chunk.page in pages:
+            words = words[OVERLAP_WORDS:]
+        pages.setdefault(chunk.page, []).extend(words)
+    return [(page, " ".join(words)) for page, words in pages.items()]
+
+
+def word_count(chunks: list[Chunk]) -> int:
+    return sum(len(text.split()) for _, text in page_texts(chunks))

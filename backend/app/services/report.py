@@ -4,6 +4,7 @@ Everything comes from the saved agent events, so the PDF shows exactly what the 
 """
 
 import io
+import re
 from datetime import datetime
 from xml.sax.saxutils import escape
 
@@ -31,6 +32,7 @@ INTENT_LABEL = {
     "profile": "Ringkasan dataset",
     "doc_qa": "Tanya dokumen",
     "doc_summary": "Ringkasan dokumen",
+    "doc_analysis": "Telaah dokumen",
     "chat": "Obrolan",
 }
 
@@ -60,6 +62,35 @@ def _fmt(value, type_name: str = "") -> str:
 
 def _paragraph(text: str, style: ParagraphStyle) -> Paragraph:
     return Paragraph(escape(text).replace("\n", "<br/>"), style)
+
+
+_BOLD = re.compile(r"\*\*(.+?)\*\*")
+_CODE_SPAN = re.compile(r"`([^`]+)`")
+_BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.)])\s+")
+_HEADING = re.compile(r"^#{1,6}\s+")
+BULLET_STYLE = ParagraphStyle("bullet", parent=BODY, leftIndent=12, bulletIndent=2)
+
+
+def _inline(text: str) -> str:
+    text = escape(text)
+    text = _BOLD.sub(r"<b>\1</b>", text)
+    return _CODE_SPAN.sub(r'<font face="Courier">\1</font>', text)
+
+
+def markdown_flowables(text: str) -> list:
+    """Render the light Markdown LLM answers use (bold, lists, headings) instead of printing the marks."""
+    flow = []
+    for line in text.splitlines():
+        if not line.strip():
+            flow.append(Spacer(1, 4))
+        elif _HEADING.match(line):
+            flow.append(Paragraph(f"<b>{_inline(_HEADING.sub('', line))}</b>", BODY))
+        elif _BULLET.match(line):
+            marker = _BULLET.match(line).group().strip()
+            flow.append(Paragraph(_inline(_BULLET.sub("", line)), BULLET_STYLE, bulletText="•" if marker in "-*•" else marker))
+        else:
+            flow.append(Paragraph(_inline(line), BODY))
+    return flow
 
 
 def _table(table: dict) -> list:
@@ -190,7 +221,7 @@ def build_pdf(question: str, answer: str, steps: list[dict], dataset_name: str, 
         _paragraph("Pertanyaan", HEADING),
         _paragraph(question, BODY),
         _paragraph("Jawaban", HEADING),
-        _paragraph(answer or "-", BODY),
+        *markdown_flowables(answer or "-"),
     ]
     if chart and table:
         drawing = _chart(chart["spec"], table)

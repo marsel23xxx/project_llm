@@ -18,9 +18,32 @@ type UiMessage = {
 const DOCUMENT_SUGGESTIONS = [
   "Ringkas dokumen ini",
   "Apa poin-poin pentingnya?",
-  "Dokumen ini ditujukan untuk siapa?",
+  "Apa saran perbaikan untuk dokumen ini?",
   "Adakah tanggal atau tenggat yang disebutkan?",
 ];
+
+const CAPABILITIES = [
+  { title: "Data tabel", text: "CSV atau Excel: total, peringkat, tren, dan grafik dari pertanyaan biasa." },
+  { title: "Prediksi & sentimen", text: "Perkiraan ke depan dari data bertanggal, dan sentimen dari kolom ulasan." },
+  { title: "Dokumen PDF", text: "Tanya isi dokumen, minta ringkasan, atau minta saran perbaikan." },
+];
+
+function sessionInfo(session: ChatSession): string {
+  const count = session.size.toLocaleString("id-ID");
+  return session.kind === "document" ? `PDF · ${count} halaman` : `Tabel · ${count} baris`;
+}
+
+function KindIcon({ kind }: { kind: ChatSession["kind"] }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0">
+      {kind === "document" ? (
+        <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5M9 13h6M9 17h6" />
+      ) : (
+        <path d="M4 5h16v14H4zM4 10h16M4 15h16M10 5v14" />
+      )}
+    </svg>
+  );
+}
 
 const SUGGESTIONS = [
   "Ringkas isi dataset ini",
@@ -39,6 +62,7 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
   const bottom = useRef<HTMLDivElement>(null);
   const messageCounter = useRef(0);
@@ -78,7 +102,8 @@ export default function Home() {
     bottom.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const activeKind = sessions.find((s) => s.id === activeId)?.kind ?? "table";
+  const activeSession = sessions.find((s) => s.id === activeId);
+  const activeKind = activeSession?.kind ?? "table";
 
   async function upload(file: File) {
     setUploading(true);
@@ -89,6 +114,7 @@ export default function Home() {
       setSessions((prev) => [session, ...prev]);
       setMessages([]);
       setActiveId(session.id);
+      setMenuOpen(false);
     } catch (err) {
       setNotice(err instanceof ApiError ? err.message : "Upload gagal");
     } finally {
@@ -162,7 +188,16 @@ export default function Home() {
 
   return (
     <div className="flex h-dvh">
-      <aside className="hidden w-72 shrink-0 flex-col border-r border-border bg-surface md:flex">
+      {menuOpen && (
+        <button
+          aria-label="Tutup menu"
+          onClick={() => setMenuOpen(false)}
+          className="fixed inset-0 z-20 bg-black/40 md:hidden"
+        />
+      )}
+      <aside
+        className={`${menuOpen ? "flex" : "hidden"} fixed inset-y-0 left-0 z-30 w-72 max-w-[85vw] shrink-0 flex-col border-r border-border bg-surface md:static md:flex`}
+      >
         <div className="p-4">
           <h1 className="font-semibold">Agentic Data Analyst</h1>
           <input
@@ -183,22 +218,35 @@ export default function Home() {
         </div>
 
         <nav className="flex-1 overflow-y-auto px-2" aria-label="Percakapan">
+          {sessions.length === 0 && <p className="px-3 py-2 text-xs text-muted">Belum ada file yang diunggah.</p>}
           {sessions.map((s) => (
             <div
               key={s.id}
-              className={`group mb-1 flex items-center rounded-lg text-sm ${
-                s.id === activeId ? "bg-background font-medium" : "text-muted hover:bg-background"
+              className={`group mb-1 flex items-center rounded-lg border-l-2 text-sm ${
+                s.id === activeId
+                  ? "border-accent bg-background"
+                  : "border-transparent text-muted hover:bg-background hover:text-foreground"
               }`}
             >
-              <button onClick={() => setActiveId(s.id)} className="min-w-0 flex-1 truncate px-3 py-2 text-left">
-                {s.title}
+              <button
+                onClick={() => {
+                  setActiveId(s.id);
+                  setMenuOpen(false);
+                }}
+                className="flex min-w-0 flex-1 items-center gap-2.5 px-3 py-2 text-left"
+              >
+                <KindIcon kind={s.kind} />
+                <span className="min-w-0">
+                  <span className={`block truncate ${s.id === activeId ? "font-medium text-foreground" : ""}`}>{s.title}</span>
+                  <span className="block truncate text-xs text-muted">{sessionInfo(s)}</span>
+                </span>
               </button>
               <button
                 onClick={() => removeDataset(s)}
                 disabled={busy}
                 aria-label={`Hapus ${s.title}`}
                 title="Hapus data ini"
-                className="mr-1 shrink-0 rounded-md px-2 py-1 text-muted opacity-0 hover:text-red-600 focus:opacity-100 group-hover:opacity-100 disabled:opacity-0 dark:hover:text-red-400"
+                className="mr-1 shrink-0 rounded-md p-2 text-muted hover:text-red-600 focus:opacity-100 disabled:opacity-40 md:opacity-0 md:group-hover:opacity-100 dark:hover:text-red-400"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" />
@@ -217,25 +265,58 @@ export default function Home() {
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col">
+        <header className="flex items-center gap-3 border-b border-border bg-surface px-4 py-3">
+          <button
+            onClick={() => setMenuOpen(true)}
+            aria-label="Buka menu"
+            className="rounded-md p-1.5 text-muted hover:text-foreground md:hidden"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <path d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+          {activeSession ? (
+            <div className="flex min-w-0 items-center gap-2.5">
+              <KindIcon kind={activeSession.kind} />
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{activeSession.title}</p>
+                <p className="text-xs text-muted">{sessionInfo(activeSession)}</p>
+              </div>
+            </div>
+          ) : (
+            <p className="text-sm font-medium md:text-muted">Agentic Data Analyst</p>
+          )}
+        </header>
         <div className="flex-1 overflow-y-auto">
           <div className="mx-auto max-w-3xl space-y-6 px-4 py-8">
             {!activeId && (
-              <div className="py-24 text-center">
-                <h2 className="text-lg font-semibold">Mulai dengan mengunggah data</h2>
-                <p className="mt-2 text-sm text-muted">
-                  Unggah file CSV, Excel, atau PDF, lalu tanyakan apa saja dalam Bahasa Indonesia.
+              <div className="py-12 text-center sm:py-20">
+                <h2 className="text-xl font-semibold">Tanya data Anda dalam Bahasa Indonesia</h2>
+                <p className="mx-auto mt-2 max-w-md text-sm text-muted">
+                  Unggah file, lalu ajukan pertanyaan. Jawaban disertai tabel, grafik, dan cara perhitungannya.
                 </p>
                 <button
                   onClick={() => fileInput.current?.click()}
-                  className="mt-6 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white md:hidden"
+                  disabled={uploading}
+                  className="mt-6 rounded-lg bg-accent px-5 py-2.5 text-sm font-medium text-white disabled:opacity-60"
                 >
-                  Unggah data
+                  {uploading ? "Mengunggah..." : "Unggah CSV / Excel / PDF"}
                 </button>
+                <div className="mt-10 grid gap-3 text-left sm:grid-cols-3">
+                  {CAPABILITIES.map((item) => (
+                    <div key={item.title} className="rounded-xl border border-border bg-surface p-4">
+                      <p className="text-sm font-medium">{item.title}</p>
+                      <p className="mt-1 text-xs leading-relaxed text-muted">{item.text}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
 
             {activeId && messages.length === 0 && (
-              <div className="grid gap-2 sm:grid-cols-2">
+              <div>
+                <p className="mb-3 text-sm text-muted">Coba salah satu pertanyaan ini:</p>
+                <div className="grid gap-2 sm:grid-cols-2">
                 {(activeKind === "document" ? DOCUMENT_SUGGESTIONS : SUGGESTIONS).map((q) => (
                   <button
                     key={q}
@@ -245,16 +326,19 @@ export default function Home() {
                     {q}
                   </button>
                 ))}
+                </div>
               </div>
             )}
 
             {messages.map((msg) =>
               msg.role === "user" ? (
                 <div key={msg.key} className="flex justify-end">
-                  <p className="max-w-[80%] rounded-2xl bg-accent px-4 py-2 text-sm text-white">{msg.content}</p>
+                  <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-md bg-accent px-4 py-2 text-sm text-white">
+                    {msg.content}
+                  </p>
                 </div>
               ) : (
-                <div key={msg.key} className="rounded-xl border border-border bg-surface p-4 text-sm">
+                <div key={msg.key} className="rounded-2xl rounded-tl-md border border-border bg-surface p-4 text-sm shadow-sm sm:p-5">
                   <AssistantMessage steps={msg.steps} pending={msg.pending} messageId={msg.messageId} />
                 </div>
               ),

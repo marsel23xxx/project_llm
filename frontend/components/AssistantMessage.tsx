@@ -1,6 +1,7 @@
 "use client";
 
 import { DataTable } from "@/components/DataTable";
+import { Markdown } from "@/components/Markdown";
 import { ResultChart } from "@/components/ResultChart";
 import { useState } from "react";
 
@@ -14,6 +15,7 @@ const INTENT_LABEL = {
   profile: "Ringkasan Dataset",
   doc_qa: "Tanya Dokumen",
   doc_summary: "Ringkasan Dokumen",
+  doc_analysis: "Telaah Dokumen",
   chat: "Obrolan",
 } as const;
 
@@ -25,7 +27,7 @@ function progressLabel(steps: AgentEvent[]): string {
       if (last.value === "chat") return "Menyusun jawaban...";
       if (last.value === "forecast") return "Melatih model prediksi dan menguji akurasinya...";
       if (last.value === "doc_qa") return "Mencari bagian dokumen yang relevan...";
-      if (last.value === "doc_summary") return "Membaca dokumen...";
+      if (last.value === "doc_summary" || last.value === "doc_analysis") return "Membaca dokumen...";
       return last.value === "sentiment" ? "Membaca dan menilai teks..." : "Menulis kode analisis...";
     case "code":
       return "Menjalankan kode...";
@@ -75,7 +77,7 @@ export function AssistantMessage({ steps, pending, messageId }: Props) {
       )}
 
       {answer ? (
-        <p className="whitespace-pre-wrap leading-relaxed">{answer.text}</p>
+        <Markdown text={answer.text} />
       ) : error ? (
         <p role="alert" className="text-red-600 dark:text-red-400">
           {error.message}

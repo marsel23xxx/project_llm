@@ -107,3 +107,11 @@ def test_pdf_report_handles_bar_chart_and_plain_chat():
     now = datetime(2026, 10, 11, tzinfo=timezone.utc)
     assert "SELECT produk" in _pdf_text(build_pdf("apa yang laku", "Kopi.", bar, "a.csv", now))
     assert build_pdf("halo", "Halo!", [{"type": "intent", "value": "chat"}], "a.csv", now).startswith(b"%PDF")
+
+
+def test_pdf_report_renders_markdown_instead_of_printing_the_marks():
+    answer = "## Saran\n\n1. **Perjelas tenggat** pelaporan (hal. 3).\n- Gunakan `formulir` baku & <cek> ulang."
+    pdf = build_pdf("apa saranmu", answer, [{"type": "intent", "value": "doc_analysis"}], "sop.pdf", datetime(2026, 10, 12, tzinfo=timezone.utc))
+    text = _pdf_text(pdf)
+    assert "Perjelas tenggat" in text and "formulir" in text and "<cek>" in text and "Telaah dokumen" in text
+    assert "**" not in text and "##" not in text and "`" not in text

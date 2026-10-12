@@ -95,8 +95,9 @@ async def _save_reply(
         await db.commit()
 
 
-def _session_out(session: ChatSession, kind: str) -> dict:
-    return {**SessionOut.model_validate(session).model_dump(), "kind": kind}
+def _session_out(session: ChatSession, dataset: Dataset | None) -> dict:
+    extra = {"kind": dataset.kind, "size": dataset.row_count} if dataset else {}
+    return {**SessionOut.model_validate(session).model_dump(), **extra}
 
 
 def _sse(event: dict) -> str:
@@ -112,18 +113,18 @@ async def create_session(body: SessionCreate, user: CurrentUser, db: DbSession) 
     db.add(session)
     await db.commit()
     await db.refresh(session)
-    return _session_out(session, dataset.kind)
+    return _session_out(session, dataset)
 
 
 @router.get("/sessions", response_model=list[SessionOut])
 async def list_sessions(user: CurrentUser, db: DbSession) -> list[dict]:
     rows = await db.execute(
-        select(ChatSession, Dataset.kind)
+        select(ChatSession, Dataset)
         .join(Dataset, Dataset.id == ChatSession.dataset_id)
         .where(ChatSession.user_id == user.id)
         .order_by(ChatSession.created_at.desc())
     )
-    return [_session_out(session, kind) for session, kind in rows]
+    return [_session_out(session, dataset) for session, dataset in rows]
 
 
 @router.get("/sessions/{session_id}", response_model=SessionDetail)
@@ -133,7 +134,7 @@ async def get_session(session_id: uuid.UUID, user: CurrentUser, db: DbSession) -
         select(Message).where(Message.session_id == session.id).order_by(Message.created_at)
     )
     dataset = await db.get(Dataset, session.dataset_id)
-    return {**_session_out(session, dataset.kind if dataset else "table"), "messages": list(messages)}
+    return {**_session_out(session, dataset), "messages": list(messages)}
 
 
 @router.post("/sessions/{session_id}/messages")
@@ -171,6 +172,7 @@ async def send_message(
             # Only the last exchange: a small model loses the thread with more, and context is tight.
             "history": _history_text(history[-2:]),
             "previous_question": next((m.content for m in reversed(history) if m.role == "user"), ""),
+            "file_note": f"File aktif di sesi ini: dokumen PDF \"{dataset.original_filename}\" ({dataset.row_count} halaman).",
         }
         context = ""
     else:

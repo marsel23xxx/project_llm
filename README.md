@@ -39,6 +39,8 @@ Evaluasi pada `samples/sop_layanan_linen.pdf` dengan 14 pertanyaan berkunci jawa
 | Waktu per jawaban | median 20.1 detik, maksimum 40.5 detik |
 
 Keputusan desain dan batasannya:
+- Dengan model hosted (DeepSeek/Claude), dokumen sampai 20.000 kata dikirim utuh di setiap pertanyaan, karena model hosted membaca prompt panjang dalam hitungan detik; ini yang memungkinkan permintaan seperti "apa saranmu untuk dokumen ini". Dokumen diletakkan di awal prompt agar pertanyaan berikutnya terkena prompt cache penyedia. Di atas batas itu, atau dengan LLM lokal, jalur pencarian kutipan di bawah yang dipakai.
+- Di sesi dokumen, jalur dipilih dengan aturan (ringkasan, telaah, tanya), bukan classifier intent: classifier dilatih pada pertanyaan tabel dan mengira "apa saranmu terhadap dokumen ini" sebagai obrolan.
 - LLM di CPU membaca sekitar 15 sampai 20 token prompt per detik, jadi ukuran prompt adalah latensi. Versi pertama (4 potongan 170 kata) butuh 42 sampai 171 detik dan sering menjawab "tidak ditemukan"; potongan lebih kecil, lebih sedikit, dan urutan terkuat di dekat pertanyaan menurunkannya ke sekitar 20 detik dengan jawaban yang lebih tepat.
 - Ringkasan dokumen panjang dibuat dari 12 cuplikan yang tersebar merata di seluruh halaman, dan jawaban menyebutkan hal itu.
 - Satu kegagalan yang tersisa pada evaluasi adalah model 3B menjawab "tidak ditemukan" walau kutipannya benar; prompt tidak disetel khusus untuk pertanyaan itu.

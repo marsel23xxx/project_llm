@@ -42,12 +42,21 @@ from app.services.agent.sentiment import analyze as analyze_text_sentiment
 from app.services.llm.base import LLMError, LLMResult
 from app.services.llm.router import LLMRouter
 
-Intent = Literal["sql", "python", "sentiment", "forecast", "profile", "doc_qa", "doc_summary", "chat"]
+Intent = Literal["sql", "python", "sentiment", "forecast", "profile", "doc_qa", "doc_summary", "doc_analysis", "chat"]
 SUMMARY_ROWS = 20
 
 DOC_SUMMARY_QUESTION = re.compile(
     r"\b(ringkas|ringkasan|rangkum|rangkuman|intisari|inti|garis besar|poin penting|poin utama|kesimpulan)\b"
     r"|\b(dokumen|file|pdf) (ini|nya)? ?(tentang|membahas|berisi|isinya) apa\b|\btentang apa\b"
+)
+DOC_ANALYSIS_QUESTION = re.compile(
+    r"\b(saran|sarankan|rekomendasi|rekomendasikan|evaluasi|kritik|kelemahan|kekurangan|kelebihan|perbaikan|perbaiki"
+    r"|review|tinjau|nilai|penilaian|pendapat|menurutmu|analisis|analisa|risiko|masukan)\b"
+)
+# Whole-message matches only: "halo, apa isi dokumen ini" is a question, not a greeting.
+SMALL_TALK = re.compile(
+    r"(halo|hai|hi|hello|pagi|siang|sore|malam|selamat (pagi|siang|sore|malam)|terima kasih( banyak)?|oke|ok|sip|mantap|siap|tes|test)"
+    r"( (ya|juga|sudah|siap|paham))?"
 )
 _CODE_BLOCK = re.compile(r"```(?:sql|python|py)?\s*\n?(.*?)```", re.DOTALL | re.IGNORECASE)
 
@@ -67,6 +76,7 @@ class AgentState(TypedDict, total=False):
     doc_chunks: list[dict] | None
     history: str
     previous_question: str
+    file_note: str
     sources: list[dict]
     answer: str
     usage: Annotated[list[dict], operator.add]
@@ -120,12 +130,18 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
 
     async def route(state: AgentState) -> dict:
         if state.get("doc_chunks") is not None:
-            # A document has no table to query: either small talk, a summary, or a question about its text.
-            if intent_model:
-                pred = intent_model.predict(state["question"])
-                if pred.label == "chat" and pred.confidence >= intent_model.threshold:
-                    return {"intent": "chat", "attempts": 0, "usage": []}
-            intent = "doc_summary" if DOC_SUMMARY_QUESTION.search(normalize(state["question"])) else "doc_qa"
+            # A document has no table to query. Everything is about the document unless it is plainly
+            # a greeting or thanks; the intent classifier was trained on table questions and mislabels
+            # requests such as "apa saranmu untuk dokumen ini" as small talk.
+            text = normalize(state["question"])
+            if SMALL_TALK.fullmatch(text):
+                return {"intent": "chat", "attempts": 0, "usage": []}
+            if DOC_SUMMARY_QUESTION.search(text):
+                intent = "doc_summary"
+            elif DOC_ANALYSIS_QUESTION.search(text):
+                intent = "doc_analysis"
+            else:
+                intent = "doc_qa"
             return {"intent": intent, "attempts": 0, "usage": [{"step": "route", "provider": "rule", "model": "document"}]}
         if profiling.is_overview_question(state["question"]):
             return {"intent": "profile", "attempts": 0, "usage": [{"step": "route", "provider": "rule", "model": "overview"}]}
@@ -218,20 +234,35 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
 
     async def answer_document(state: AgentState) -> dict:
         chunks = [documents.Chunk(**c) for c in state["doc_chunks"]]
-        question = state["question"]
+        question, intent = state["question"], state["intent"]
         hosted = getattr(llm, "has_strong_model", False)
-        if state["intent"] == "doc_summary":
+        total_pages = chunks[-1].page
+        sources: list[dict] = []
+        history = state.get("history", "")
+
+        if hosted and documents.word_count(chunks) <= settings.doc_full_context_words:
+            # A hosted model reads the whole document in a second or two, so any question (facts,
+            # summary, critique) is answered from all of it rather than from a few retrieved passages.
+            # The document comes first in the prompt so repeat questions hit the provider's prompt cache.
+            passages = documents.page_texts(chunks)
+            system = prompts.DOC_FULL_SYSTEM
+            note = f"Jawaban dibuat dari seluruh dokumen ({total_pages} halaman)."
+            max_tokens = 1500
+        elif intent in ("doc_summary", "doc_analysis"):
             limit = documents.SUMMARY_EXCERPTS_HOSTED if hosted else documents.SUMMARY_EXCERPTS
             picked, sampled = documents.summary_excerpts(chunks, limit)
+            passages = [(c.page, c.text) for c in picked]
+            what = "Ringkasan" if intent == "doc_summary" else "Jawaban"
             if sampled:
                 note = (
-                    f"Dokumen {chunks[-1].page} halaman terlalu panjang untuk dibaca sekaligus; ringkasan dibuat dari "
+                    f"Dokumen {total_pages} halaman terlalu panjang untuk dibaca sekaligus; {what.lower()} dibuat dari "
                     f"{len(picked)} cuplikan yang tersebar dari halaman {picked[0].page} sampai {picked[-1].page}."
                 )
             else:
-                note = f"Ringkasan dibuat dari seluruh dokumen ({chunks[-1].page} halaman)."
-            system = prompts.DOC_SUMMARY_SYSTEM
-            history = ""
+                note = f"{what} dibuat dari seluruh dokumen ({total_pages} halaman)."
+            system = prompts.DOC_SUMMARY_SYSTEM if intent == "doc_summary" else prompts.DOC_ANALYSIS_SYSTEM
+            # A CPU model writes about 7 tokens per second; a long answer would outlast the request timeout.
+            max_tokens = 900 if hosted else 320
         else:
             # "jelaskan lebih detail" alone retrieves nothing useful; borrow the previous question's words.
             query = question if len(question.split()) >= 4 else f"{state.get('previous_question', '')} {question}"
@@ -239,20 +270,19 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
             hits = await asyncio.to_thread(lambda: documents.Retriever(chunks).search(query, k))
             if not hits:
                 return {"answer": "Saya tidak menemukan bagian dokumen yang berkaitan dengan pertanyaan itu.", "sources": []}
-            picked, note = [chunk for chunk, _ in hits], ""
-            system = prompts.DOC_QA_SYSTEM
-            history = state.get("history", "")
+            picked = [chunk for chunk, _ in hits]
+            passages = [(c.page, c.text) for c in picked]
+            # Shown strongest first, the reverse of the order the model reads them in.
+            sources = [{"page": c.page, "text": c.text[:400]} for c in reversed(picked)]
+            system, note, max_tokens = prompts.DOC_QA_SYSTEM, "", 600
 
-        request = prompts.document_request(question, [(c.page, c.text) for c in picked], history)
-        out = await llm.complete("complex", system, [{"role": "user", "content": request}], 600)
-        pages = sorted({c.page for c in picked})
-        # Shown strongest first, the reverse of the order the model reads them in.
-        sources = [{"page": c.page, "text": c.text[:400]} for c in reversed(picked)] if state["intent"] == "doc_qa" else []
+        request = prompts.document_request(question, passages, history)
+        out = await llm.complete("complex", system, [{"role": "user", "content": request}], max_tokens)
         return {
             "answer": out.text.strip(),
             "sources": sources,
             "result": {"columns": [], "types": [], "rows": [], "truncated": False, "stdout": note, "value": None, "type": "table"},
-            "usage": _usage(out, state["intent"]) + [{"step": "retrieve", "pages": pages}],
+            "usage": _usage(out, intent) + [{"step": "context", "pages": sorted({page for page, _ in passages})}],
         }
 
     async def describe_dataset(state: AgentState) -> dict:
@@ -268,8 +298,9 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
         return {"answer": out.text.strip(), "usage": _usage(out, "summarize")}
 
     async def answer_chat(state: AgentState) -> dict:
+        system = prompts.CHAT_SYSTEM + (f"\n{state['file_note']}" if state.get("file_note") else "")
         try:
-            out = await llm.complete("simple", prompts.CHAT_SYSTEM, [{"role": "user", "content": state["question"]}], 400)
+            out = await llm.complete("simple", system, [{"role": "user", "content": state["question"]}], 400)
         except LLMError:
             return {"answer": "Halo! Silakan tanyakan sesuatu tentang dataset yang kamu unggah.", "usage": []}
         return {"answer": out.text.strip(), "usage": _usage(out, "chat")}
@@ -301,7 +332,7 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
         "route",
         lambda s: s["intent"],
         {"sql": "generate_sql", "python": "generate_python", "sentiment": "analyze_sentiment", "forecast": "run_forecast", "profile": "describe_dataset", "chat": "answer_chat",
-         "doc_qa": "answer_document", "doc_summary": "answer_document"},
+         "doc_qa": "answer_document", "doc_summary": "answer_document", "doc_analysis": "answer_document"},
     )
     graph.add_conditional_edges(
         "analyze_sentiment", lambda s: END if s.get("answer") else "summarize", ["summarize", END]
