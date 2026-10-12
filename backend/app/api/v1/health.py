@@ -23,5 +23,8 @@ async def health(request: Request, db: DbSession, redis: RedisClient) -> dict:
     llm = request.app.state.llm
     checks["llm_mode"] = llm.mode
     checks["claude_configured"] = llm.claude is not None
+    checks["remote_configured"] = llm.remote is not None
+    # What actually answers: the hosted model only when the mode allows it and a key is present.
+    checks["hosted_model"] = llm.hosted_model if llm.has_strong_model else None
     checks["status"] = "ok" if checks["database"] == checks["redis"] == "ok" else "degraded"
     return checks

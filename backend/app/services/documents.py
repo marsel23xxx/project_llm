@@ -23,7 +23,10 @@ MIN_CHARS_PER_PAGE = 30  # below this on average, the PDF is almost certainly sc
 CHUNK_WORDS = 110
 OVERLAP_WORDS = 20
 TOP_K = 3
+# A hosted model reads a long prompt in a second or two, so it can be given more of the document.
+TOP_K_HOSTED = 6
 SUMMARY_EXCERPTS = 12
+SUMMARY_EXCERPTS_HOSTED = 40
 SUMMARY_EXCERPT_WORDS = 70
 
 
@@ -95,14 +98,14 @@ class Retriever:
         return [(self.chunks[i], float(scores[i])) for i in reversed(best)]
 
 
-def summary_excerpts(chunks: list[Chunk]) -> tuple[list[Chunk], bool]:
+def summary_excerpts(chunks: list[Chunk], limit: int = SUMMARY_EXCERPTS) -> tuple[list[Chunk], bool]:
     """Material for a whole-document summary within a small prompt budget.
 
     A short document is used in full. A long one is sampled: the opening of evenly spaced chunks,
     so the summary reflects the whole document instead of only its first pages.
     """
-    if len(chunks) <= SUMMARY_EXCERPTS:
+    if len(chunks) <= limit:
         return chunks, False
-    step = (len(chunks) - 1) / (SUMMARY_EXCERPTS - 1)
-    picked = [chunks[round(i * step)] for i in range(SUMMARY_EXCERPTS)]
+    step = (len(chunks) - 1) / (limit - 1)
+    picked = [chunks[round(i * step)] for i in range(limit)]
     return [Chunk(c.page, c.position, " ".join(c.text.split()[:SUMMARY_EXCERPT_WORDS])) for c in picked], True

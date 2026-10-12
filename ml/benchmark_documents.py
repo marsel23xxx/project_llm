@@ -61,7 +61,7 @@ async def main() -> None:
     unanswerable = [r for r in rows if not r["answerable"]]
     report = {
         "document": "samples/sop_layanan_linen.pdf (5 halaman, sintetis)",
-        "model": settings.local_llm_model if llm.mode == "local" else settings.claude_model,
+        "model": llm.hosted_model if llm.has_strong_model else settings.local_llm_model,
         "chunk_words": documents.CHUNK_WORDS,
         "top_k": documents.TOP_K,
         "chunks": len(chunks),

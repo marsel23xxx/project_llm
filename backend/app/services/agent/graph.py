@@ -219,8 +219,10 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
     async def answer_document(state: AgentState) -> dict:
         chunks = [documents.Chunk(**c) for c in state["doc_chunks"]]
         question = state["question"]
+        hosted = getattr(llm, "has_strong_model", False)
         if state["intent"] == "doc_summary":
-            picked, sampled = documents.summary_excerpts(chunks)
+            limit = documents.SUMMARY_EXCERPTS_HOSTED if hosted else documents.SUMMARY_EXCERPTS
+            picked, sampled = documents.summary_excerpts(chunks, limit)
             if sampled:
                 note = (
                     f"Dokumen {chunks[-1].page} halaman terlalu panjang untuk dibaca sekaligus; ringkasan dibuat dari "
@@ -233,7 +235,8 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
         else:
             # "jelaskan lebih detail" alone retrieves nothing useful; borrow the previous question's words.
             query = question if len(question.split()) >= 4 else f"{state.get('previous_question', '')} {question}"
-            hits = await asyncio.to_thread(lambda: documents.Retriever(chunks).search(query))
+            k = documents.TOP_K_HOSTED if hosted else documents.TOP_K
+            hits = await asyncio.to_thread(lambda: documents.Retriever(chunks).search(query, k))
             if not hits:
                 return {"answer": "Saya tidak menemukan bagian dokumen yang berkaitan dengan pertanyaan itu.", "sources": []}
             picked, note = [chunk for chunk, _ in hits], ""

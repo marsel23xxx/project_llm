@@ -99,7 +99,7 @@ backend/                FastAPI
   app/core/             config, keamanan (Argon2 + JWT), rate limit
   app/db/               model SQLAlchemy (users, datasets)
   app/services/data/    ingest CSV/XLSX ke DuckDB, profiling, cleanup 24 jam
-  app/services/llm/     provider lokal (llama.cpp) + Claude API, router hybrid
+  app/services/llm/     provider lokal (llama.cpp), OpenAI-compatible (DeepSeek), Claude; router hybrid
   app/services/agent/   graph LangGraph, guardrail, eksekutor DuckDB, klien sandbox, pemilih grafik, sentimen
   app/services/documents.py   ekstraksi PDF, pemecahan teks, pencarian kutipan
   app/services/report.py      pembuat laporan PDF
@@ -147,10 +147,12 @@ docker compose --profile llm up -d
 | `LLM_MODE` | Perilaku | Biaya API |
 | --- | --- | --- |
 | `local` | Semua jawaban dari Qwen2.5-Coder 3B di VPS | US$0 |
-| `hybrid` | Pertanyaan sederhana ke lokal, multi-langkah ke Claude API | sesuai pemakaian |
-| `api` | Semua ke Claude API, lokal sebagai cadangan | sesuai pemakaian |
+| `hybrid` | Tugas ringan (merangkum hasil) ke lokal; SQL, kode, dan dokumen ke API | sesuai pemakaian |
+| `api` | Semua ke API, lokal hanya sebagai cadangan jika API gagal atau saldo habis | sesuai pemakaian |
 
-Gunakan `local` selama development. Isi `ANTHROPIC_API_KEY` dan pasang spend limit di Claude Console hanya saat siap live demo.
+"API" adalah model hosted yang dikonfigurasi: DeepSeek (atau penyedia lain berformat OpenAI) lewat `REMOTE_LLM_API_KEY`, atau Claude lewat `ANTHROPIC_API_KEY` (Claude didahulukan jika keduanya diisi). Yang dikirim ke penyedia hanya isi prompt agent: nama kolom, 3 baris contoh, atau kutipan dokumen yang relevan, bukan file yang diunggah.
+
+Gunakan `local` selama development. API key baru diisi saat siap live demo; kedua penyedia memakai saldo prabayar.
 
 ## Endpoint
 

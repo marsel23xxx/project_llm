@@ -57,7 +57,7 @@ async def main() -> None:
             hybrid_correct += llm_label == row["label"]
 
     report["llm"] = {
-        "model": settings.local_llm_model if llm.mode == "local" else settings.claude_model,
+        "model": llm.hosted_model if llm.has_strong_model else settings.local_llm_model,
         "accuracy": round(llm_correct / len(rows), 3),
         "ms_per_question": round(sum(llm_ms) / len(llm_ms), 1),
     }

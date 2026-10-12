@@ -37,6 +37,11 @@ class Settings(BaseSettings):
     llm_mode: Literal["local", "hybrid", "api"] = "local"
     local_llm_url: str = "http://localhost:8080"
     local_llm_model: str = "qwen2.5-coder-3b-instruct"
+    # Hosted OpenAI-compatible API (DeepSeek by default). Used when ANTHROPIC_API_KEY is empty.
+    remote_llm_base_url: str = "https://api.deepseek.com"
+    remote_llm_api_key: str | None = None
+    remote_llm_model: str = "deepseek-flash"
+    remote_llm_disable_thinking: bool = True
     anthropic_api_key: str | None = None
     claude_model: str = "claude-opus-5-5"
     # Kosongkan (CLAUDE_EFFORT=) untuk model yang tidak mendukung effort, mis. Haiku 4.5
@@ -60,7 +65,7 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.environment == "production"
 
-    @field_validator("claude_effort", "anthropic_api_key", "intent_min_confidence", mode="before")
+    @field_validator("claude_effort", "anthropic_api_key", "remote_llm_api_key", "intent_min_confidence", mode="before")
     @classmethod
     def _empty_as_none(cls, value):
         return value or None

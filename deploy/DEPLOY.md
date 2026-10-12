@@ -164,7 +164,23 @@ Jawaban pertama setelah server menganggur lama bisa lebih lambat karena model di
 | Hentikan semua | `docker compose --profile llm down` (data tetap ada di volume) |
 | Bersihkan image lama | `docker image prune -f` |
 
-## Mengaktifkan mode hybrid (Claude API)
+## Mengaktifkan API LLM (DeepSeek atau Claude)
 
-Isi di `.env`: `LLM_MODE=hybrid`, `ANTHROPIC_API_KEY=...`, dan `CLAUDE_MODEL` pilihanmu, lalu
-`docker compose up -d backend`. Pasang spend limit di Claude Console sebelum mengaktifkannya.
+Tanpa langkah ini aplikasi memakai LLM lokal saja (gratis).
+
+DeepSeek (murah): buat API key dan isi saldo di platform.deepseek.com, lalu di `.env`:
+
+```bash
+sed -i "s|^REMOTE_LLM_API_KEY=.*|REMOTE_LLM_API_KEY=sk-...|" .env
+sed -i "s|^LLM_MODE=.*|LLM_MODE=api|" .env
+docker compose up -d backend
+curl -s localhost:8000/api/v1/health    # "hosted_model":"deepseek-flash"
+```
+
+Jika baris `REMOTE_LLM_API_KEY` belum ada di `.env` (file dibuat sebelum fitur ini), tambahkan dengan
+`echo 'REMOTE_LLM_API_KEY=sk-...' >> .env`.
+
+Claude: isi `ANTHROPIC_API_KEY` dan `CLAUDE_MODEL`, mode yang sama. Pasang spend limit di Claude Console.
+
+Kembali ke gratis kapan saja: `LLM_MODE=local`, lalu `docker compose up -d backend`.
+Jika saldo habis atau API mati, aplikasi otomatis memakai LLM lokal.
