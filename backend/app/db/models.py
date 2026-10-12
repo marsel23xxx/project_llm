@@ -34,6 +34,8 @@ class Dataset(Base):
     source: Mapped[str] = mapped_column(String(16), default="", server_default="")
     # Pages (or the image) whose text came from OCR rather than embedded text.
     ocr_pages: Mapped[int] = mapped_column(default=0, server_default="0")
+    # Pages OCR could not read reliably, read by the hosted vision model instead.
+    vision_pages: Mapped[int] = mapped_column(default=0, server_default="0")
     # "table": CSV/XLSX loaded into DuckDB. "document": PDF or image text stored as chunks (duckdb_path is empty).
     kind: Mapped[str] = mapped_column(String(16), default="table", server_default="table")
     duckdb_path: Mapped[str] = mapped_column(String(512))

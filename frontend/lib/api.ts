@@ -9,6 +9,8 @@ export type SessionFile = {
   size: number;
   /** Pages (or the image) read with OCR. */
   ocr_pages: number;
+  /** Pages OCR could not read reliably, read by the vision model instead. */
+  vision_pages: number;
   expires_at: string;
 };
 

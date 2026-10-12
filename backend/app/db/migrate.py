@@ -14,6 +14,7 @@ STATEMENTS = [
     "CREATE INDEX IF NOT EXISTS ix_datasets_session_id ON datasets (session_id)",
     "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS source VARCHAR(16) NOT NULL DEFAULT ''",
     "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS ocr_pages INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE datasets ADD COLUMN IF NOT EXISTS vision_pages INTEGER NOT NULL DEFAULT 0",
     # Carry over sessions created under the old one-file model, then detach the old link so that
     # removing a file no longer deletes the whole conversation.
     """

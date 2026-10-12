@@ -5,6 +5,7 @@ read well; handwriting, skewed or blurry photos, and low-resolution screenshots 
 """
 
 import shutil
+from dataclasses import dataclass
 
 from PIL import Image, ImageOps
 
@@ -34,9 +35,26 @@ def prepare(image: Image.Image) -> Image.Image:
     return image
 
 
-def read_text(image: Image.Image) -> str:
+@dataclass
+class OcrResult:
+    text: str
+    words: int
+    # Mean per-word confidence (0-100). On test images, 90+ meant every number was read correctly,
+    # around 80 meant some were wrong, and below that the text was unusable.
+    confidence: float
+
+
+def read(image: Image.Image) -> OcrResult:
     if not available():
         raise OcrUnavailable("Mesin OCR tidak terpasang di server ini.")
     import pytesseract
 
-    return pytesseract.image_to_string(prepare(image), lang=LANGUAGES).strip()
+    prepared = prepare(image)
+    data = pytesseract.image_to_data(prepared, lang=LANGUAGES, output_type=pytesseract.Output.DICT)
+    scores = [float(c) for word, c in zip(data["text"], data["conf"]) if word.strip() and float(c) >= 0]
+    text = pytesseract.image_to_string(prepared, lang=LANGUAGES).strip()
+    return OcrResult(text=text, words=len(scores), confidence=sum(scores) / len(scores) if scores else 0.0)
+
+
+def read_text(image: Image.Image) -> str:
+    return read(image).text

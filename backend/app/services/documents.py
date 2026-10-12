@@ -5,7 +5,9 @@ model, is fast for a single document, and tolerates typos and Indonesian affixes
 character n-grams. Dense embeddings can replace `Retriever` later without touching its callers.
 """
 
+import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,12 +20,21 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from app.ml.text import normalize
 from app.services import ocr
 
+logger = logging.getLogger(__name__)
+
+# Reads an image with a hosted vision model; see app/services/vision.py.
+VisionFn = Callable[[Image.Image], str]
+
 MAX_PAGES = 300
 MIN_CHARS_PER_PAGE = 30  # a page with less text than this is treated as a scanned image
 # OCR takes a few seconds per page on CPU and uploads are processed while the user waits.
 MAX_OCR_PAGES = 30
 OCR_DPI = 200
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+# Below this mean word confidence OCR output is not trusted (measured: 90+ had every number right,
+# about 80 had wrong numbers). Such images go to the vision model when one is available.
+OCR_MIN_CONFIDENCE = 85.0
+OCR_MIN_WORDS = 3
 # A CPU-only LLM reads roughly 15-20 prompt tokens per second, so prompt size is the latency:
 # small chunks and few of them keep a document answer under a minute.
 CHUNK_WORDS = 110
@@ -51,12 +62,34 @@ class Chunk:
 @dataclass
 class Extraction:
     pages: list[str]
-    ocr_pages: int = 0  # how many pages were read by OCR instead of from embedded text
+    ocr_pages: int = 0  # pages read by OCR instead of from embedded text
+    vision_pages: int = 0  # pages OCR could not read reliably, read by the vision model
 
 
-def extract_pages(path: Path) -> Extraction:
-    """Text of each PDF page. Pages without embedded text (scans) are read with OCR."""
-    ocr_pages = 0
+def read_image(image: Image.Image, vision: VisionFn | None = None) -> tuple[str, str]:
+    """Text of one image and how it was read ("ocr" or "vision").
+
+    OCR runs first: it is free and stays on the server. Only when it is unsure, and a vision model
+    is configured, is the image sent out. If the vision call fails the OCR text is still used.
+    """
+    result = ocr.read(image) if ocr.available() else None
+    confident = result is not None and result.words >= OCR_MIN_WORDS and result.confidence >= OCR_MIN_CONFIDENCE
+    if vision is not None and not confident:
+        try:
+            text = vision(image).strip()
+            if text:
+                return text, "vision"
+        except Exception as exc:  # any provider failure falls back to what OCR found
+            logger.warning("Vision gagal, memakai hasil OCR: %s", exc)
+    if result is None:
+        raise ocr.OcrUnavailable("Mesin OCR tidak terpasang di server ini.")
+    return result.text, "ocr"
+
+
+def extract_pages(path: Path, vision: VisionFn | None = None) -> Extraction:
+    """Text of each PDF page. Pages without embedded text (scans) are read from their image."""
+    counts = {"ocr": 0, "vision": 0}
+    can_read_images = ocr.available() or vision is not None
     try:
         with pdfplumber.open(path) as pdf:
             if len(pdf.pages) > MAX_PAGES:
@@ -64,15 +97,16 @@ def extract_pages(path: Path) -> Extraction:
             pages = []
             for page in pdf.pages:
                 text = (page.extract_text() or "").strip()
-                if len(text) < MIN_CHARS_PER_PAGE and ocr.available():
-                    if ocr_pages >= MAX_OCR_PAGES:
+                if len(text) < MIN_CHARS_PER_PAGE and can_read_images:
+                    if sum(counts.values()) >= MAX_OCR_PAGES:
                         raise DocumentError(
                             f"PDF ini berisi lebih dari {MAX_OCR_PAGES} halaman hasil scan. "
-                            f"Pecah menjadi file yang lebih kecil agar bisa dibaca dengan OCR."
+                            f"Pecah menjadi file yang lebih kecil agar bisa dibaca."
                         )
-                    scanned = ocr.read_text(page.to_image(resolution=OCR_DPI).original)
+                    scanned, method = read_image(page.to_image(resolution=OCR_DPI).original, vision)
                     if len(scanned) > len(text):
-                        text, ocr_pages = scanned, ocr_pages + 1
+                        text = scanned
+                        counts[method] += 1
                 pages.append(text)
     except DocumentError:
         raise
@@ -82,29 +116,29 @@ def extract_pages(path: Path) -> Extraction:
     if not pages:
         raise DocumentError("PDF tidak memiliki halaman.")
     if sum(len(p) for p in pages) < MIN_CHARS_PER_PAGE * len(pages):
-        if not ocr.available():
+        if not can_read_images:
             raise DocumentError("PDF ini hasil scan dan mesin OCR tidak tersedia di server, sehingga teksnya tidak bisa dibaca.")
         raise DocumentError(
-            "Teks di PDF hasil scan ini tidak terbaca oleh OCR. Coba scan ulang dengan resolusi lebih tinggi dan posisi lurus."
+            "Teks di PDF hasil scan ini tidak terbaca. Coba scan ulang dengan resolusi lebih tinggi dan posisi lurus."
         )
-    return Extraction(pages, ocr_pages)
+    return Extraction(pages, counts["ocr"], counts["vision"])
 
 
-def extract_image(path: Path) -> Extraction:
-    """Text of a photo or screenshot, read with OCR, as a one-page document."""
+def extract_image(path: Path, vision: VisionFn | None = None) -> Extraction:
+    """Text of a photo or screenshot as a one-page document."""
     try:
         with Image.open(path) as image:
             image.load()
-            text = ocr.read_text(image)
+            text, method = read_image(image, vision)
     except ocr.OcrUnavailable as exc:
         raise DocumentError(str(exc)) from exc
     except (UnidentifiedImageError, OSError) as exc:
         raise DocumentError("File gambar tidak bisa dibuka. Gunakan PNG, JPG, atau WEBP.") from exc
     if len(text) < MIN_CHARS_PER_PAGE:
         raise DocumentError(
-            "Tidak ada teks yang terbaca dari gambar ini. OCR bekerja baik untuk foto dokumen yang lurus, terang, dan tajam."
+            "Tidak ada teks yang terbaca dari gambar ini. Pastikan foto dokumennya lurus, terang, dan tajam."
         )
-    return Extraction([text], ocr_pages=1)
+    return Extraction([text], ocr_pages=int(method == "ocr"), vision_pages=int(method == "vision"))
 
 
 def chunk_pages(pages: list[str], source: str = "") -> list[Chunk]:

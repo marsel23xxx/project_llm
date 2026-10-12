@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     remote_llm_api_key: str | None = None
     remote_llm_model: str = "deepseek-flash"
     remote_llm_disable_thinking: bool = True
+    # Images OCR cannot read reliably are sent to this vision model (only when the hosted API is in use).
+    # false = images never leave the server; such images then keep their OCR text, however poor.
+    vision_fallback: bool = True
+    vision_model: str = "deepseek-flash"
     anthropic_api_key: str | None = None
     claude_model: str = "claude-opus-5-5"
     # Kosongkan (CLAUDE_EFFORT=) untuk model yang tidak mendukung effort, mis. Haiku 4.5

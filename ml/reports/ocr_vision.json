@@ -1,0 +1,140 @@
+{
+  "note": "Gambar sintetis dari teks cetak; foto HP sungguhan lebih sulit.",
+  "ocr_engine": "tesseract (ind+eng)",
+  "vision_model": null,
+  "ocr_min_confidence": 85.0,
+  "images_with_all_numbers_correct": {
+    "ocr": "5/9",
+    "vision": "tidak diukur",
+    "combined": "5/9"
+  },
+  "sent_to_vision": 0,
+  "rows": [
+    {
+      "image": "bersih",
+      "ocr": {
+        "accuracy": 0.998,
+        "numbers_correct": true,
+        "confidence": 94.0,
+        "words": 51
+      },
+      "combined": {
+        "accuracy": 0.998,
+        "numbers_correct": true,
+        "read_by": "ocr"
+      }
+    },
+    {
+      "image": "miring 4 derajat",
+      "ocr": {
+        "accuracy": 0.997,
+        "numbers_correct": true,
+        "confidence": 91.1,
+        "words": 52
+      },
+      "combined": {
+        "accuracy": 0.997,
+        "numbers_correct": true,
+        "read_by": "ocr"
+      }
+    },
+    {
+      "image": "miring 8 derajat",
+      "ocr": {
+        "accuracy": 0.896,
+        "numbers_correct": false,
+        "confidence": 80.1,
+        "words": 51
+      },
+      "combined": {
+        "accuracy": 0.896,
+        "numbers_correct": false,
+        "read_by": "ocr"
+      }
+    },
+    {
+      "image": "miring 15 derajat",
+      "ocr": {
+        "accuracy": 0.0,
+        "numbers_correct": false,
+        "confidence": 0.0,
+        "words": 0
+      },
+      "combined": {
+        "accuracy": 0.0,
+        "numbers_correct": false,
+        "read_by": "ocr"
+      }
+    },
+    {
+      "image": "buram ringan",
+      "ocr": {
+        "accuracy": 1.0,
+        "numbers_correct": true,
+        "confidence": 93.7,
+        "words": 52
+      },
+      "combined": {
+        "accuracy": 1.0,
+        "numbers_correct": true,
+        "read_by": "ocr"
+      }
+    },
+    {
+      "image": "buram berat",
+      "ocr": {
+        "accuracy": 0.402,
+        "numbers_correct": false,
+        "confidence": 32.9,
+        "words": 40
+      },
+      "combined": {
+        "accuracy": 0.402,
+        "numbers_correct": false,
+        "read_by": "ocr"
+      }
+    },
+    {
+      "image": "resolusi rendah (300 px)",
+      "ocr": {
+        "accuracy": 0.973,
+        "numbers_correct": true,
+        "confidence": 90.4,
+        "words": 50
+      },
+      "combined": {
+        "accuracy": 0.973,
+        "numbers_correct": true,
+        "read_by": "ocr"
+      }
+    },
+    {
+      "image": "gelap, kontras rendah",
+      "ocr": {
+        "accuracy": 0.998,
+        "numbers_correct": true,
+        "confidence": 94.1,
+        "words": 51
+      },
+      "combined": {
+        "accuracy": 0.998,
+        "numbers_correct": true,
+        "read_by": "ocr"
+      }
+    },
+    {
+      "image": "berbintik",
+      "ocr": {
+        "accuracy": 0.0,
+        "numbers_correct": false,
+        "confidence": 0.0,
+        "words": 0
+      },
+      "combined": {
+        "accuracy": 0.0,
+        "numbers_correct": false,
+        "read_by": "ocr"
+      }
+    }
+  ]
+}

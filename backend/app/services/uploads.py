@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.db.models import Dataset, DocumentChunk
-from app.services import documents
+from app.services import documents, vision
 from app.services.data.ingest import SUPPORTED_SUFFIXES, IngestError, load_dataframe, write_duckdb
 from app.services.data.profiling import profile_table
 
@@ -57,7 +57,9 @@ async def store_upload(
             try:
                 # Parsing and OCR are blocking; keep the event loop free for other users.
                 extraction = await asyncio.to_thread(
-                    documents.extract_image if is_image else documents.extract_pages, upload_path
+                    documents.extract_image if is_image else documents.extract_pages,
+                    upload_path,
+                    vision.reader_from(settings),
                 )
             except documents.DocumentError as exc:
                 raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
@@ -67,6 +69,7 @@ async def store_upload(
                 kind="document",
                 source="image" if is_image else "pdf",
                 ocr_pages=extraction.ocr_pages,
+                vision_pages=extraction.vision_pages,
                 duckdb_path="",
                 row_count=len(extraction.pages),
                 schema_json=[],

@@ -120,6 +120,7 @@ def _file_out(dataset: Dataset) -> dict:
         "source": dataset.source or ("pdf" if dataset.kind == "document" else "csv"),
         "size": dataset.row_count,
         "ocr_pages": dataset.ocr_pages,
+        "vision_pages": dataset.vision_pages,
         "expires_at": dataset.expires_at,
     }
 

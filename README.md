@@ -29,7 +29,8 @@ pertanyaan ─► route ─┬─ sql ───────► generate_sql ─�
 Satu chat bisa dipakai tanpa file, dan bisa dilampiri sampai 10 file kapan saja (tombol lampiran, atau tempel gambar dari clipboard).
 
 - **Dokumen dan gambar** di satu chat dibaca sebagai satu kumpulan; jawaban menyebut nama file dan halamannya.
-- **OCR** (Tesseract, model Indonesia + Inggris, berjalan di server): gambar PNG/JPG/WEBP dan halaman PDF yang tidak punya teks dibaca dengan OCR; halaman PDF yang punya teks asli tidak. Batas 30 halaman OCR per PDF. Scan bersih terbaca baik (sekitar 0,5 detik per halaman); foto miring atau buram dan tulisan tangan mulai salah baca.
+- **OCR lebih dulu, vision sebagai cadangan.** Gambar PNG/JPG/WEBP dan halaman PDF tanpa teks dibaca dengan Tesseract (model Indonesia + Inggris) di server: gratis dan gambarnya tidak keluar. Tesseract memberi keyakinan per kata; jika rata-ratanya di bawah 85 dan API hosted aktif, gambar itu dikirim ke model vision (`deepseek-flash`, maksimal 1.024 token per gambar). Jika vision gagal, hasil OCR tetap dipakai. `VISION_FALLBACK=false` mematikan pengiriman gambar. Halaman PDF yang punya teks asli tidak di-OCR. Batas 30 halaman scan per PDF.
+- Batas 85 berasal dari pengukuran (`ml/benchmark_ocr.py`, 9 gambar dari teks yang diketahui): OCR membaca semua angka dengan benar pada 5 gambar (bersih, miring 4 derajat, buram ringan, resolusi rendah, gelap), semuanya dengan keyakinan 90 ke atas; 4 gambar yang gagal (miring 8 dan 15 derajat, buram berat, berbintik) semuanya di bawah 85. Kemampuan vision pada 4 gambar itu diukur dengan script yang sama saat API key tersedia. Gambarnya sintetis; foto HP sungguhan lebih sulit.
 - **Tabel**: jika satu chat berisi beberapa tabel, yang dianalisis adalah yang terakhir dilampirkan. Menggabungkan beberapa tabel belum didukung.
 - **Chat berisi tabel dan dokumen**: kata di pertanyaan menentukan tujuannya ("dokumen", "halaman", "kontrak", "gambar" mengarah ke dokumen; selain itu ke tabel).
 - Menghapus satu file tidak menghapus percakapannya; menghapus chat menghapus semua file dan pesannya.
@@ -115,6 +116,7 @@ backend/                FastAPI
   app/services/agent/   graph LangGraph, guardrail, eksekutor DuckDB, klien sandbox, pemilih grafik, sentimen
   app/services/documents.py   ekstraksi PDF/gambar, pemecahan teks, pencarian kutipan
   app/services/ocr.py         OCR Tesseract untuk gambar dan halaman scan
+  app/services/vision.py      model vision untuk gambar yang tidak terbaca jelas oleh OCR
   app/services/uploads.py     penyimpanan file yang dilampirkan
   app/db/migrate.py           migrasi skema ringan saat startup
   app/services/report.py      pembuat laporan PDF

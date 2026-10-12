@@ -63,6 +63,7 @@ class FileOut(BaseModel):
     source: str  # "csv", "xlsx", "pdf" or "image"
     size: int  # rows for a table, pages for a document
     ocr_pages: int
+    vision_pages: int = 0
     expires_at: datetime
 
 

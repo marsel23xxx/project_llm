@@ -49,8 +49,10 @@ const CAPABILITIES = [
 function fileInfo(file: SessionFile): string {
   const count = file.size.toLocaleString("id-ID");
   if (file.kind === "table") return `${count} baris`;
-  if (file.source === "image") return "gambar · OCR";
-  return `${count} hal${file.ocr_pages > 0 ? ` · OCR ${file.ocr_pages}` : ""}`;
+  // "AI" marks pages OCR could not read reliably, which were read by the vision model instead.
+  if (file.source === "image") return file.vision_pages > 0 ? "gambar · dibaca AI" : "gambar · OCR";
+  const read = [file.ocr_pages > 0 ? `OCR ${file.ocr_pages}` : "", file.vision_pages > 0 ? `AI ${file.vision_pages}` : ""];
+  return [`${count} hal`, ...read.filter(Boolean)].join(" · ");
 }
 
 function sessionInfo(session: ChatSession): string {
