@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from app.api.v1.chat import EXPORT_HINT, split_export_request
+from app.api.v1.chat import offered_formats, split_export_request
 from app.core.config import Settings
 from app.services.agent import profile as profiling
 from app.services.agent.graph import build_agent, stream_agent
@@ -13,18 +13,30 @@ from app.services.report import build_pdf
 
 
 @pytest.mark.parametrize(
-    ("question", "cleaned", "wants_file"),
+    ("question", "cleaned", "formats"),
     [
-        ("oke tolong buat ringkasan mengenai list linen tersebut dengan pdf", "oke tolong buat ringkasan mengenai list linen tersebut", True),
-        ("total penjualan per produk, export ke excel", "total penjualan per produk", True),
-        ("download laporan penjualan bulan ini", "laporan penjualan bulan ini", True),
-        ("produk apa yang paling laku?", "produk apa yang paling laku?", False),
-        ("pdf", "pdf", True),
+        ("oke tolong buat ringkasan mengenai list linen tersebut dengan pdf", "oke tolong buat ringkasan mengenai list linen tersebut", ["pdf"]),
+        ("buatkan makalah tentang energi terbarukan dalam bentuk docx dan pdf", "buatkan makalah tentang energi terbarukan", ["docx", "pdf"]),
+        ("total penjualan per produk, export ke excel", "total penjualan per produk", ["xlsx"]),
+        ("buat proposal kerja sama, output word", "buat proposal kerja sama", ["docx"]),
+        ("download laporan penjualan bulan ini", "laporan penjualan bulan ini", ["pdf"]),
+        ("produk apa yang paling laku?", "produk apa yang paling laku?", []),
+        ("pdf", "pdf", ["pdf"]),
     ],
 )
-def test_split_export_request(question, cleaned, wants_file):
-    assert split_export_request(question) == (cleaned, wants_file)
-    assert "Unduh PDF" in EXPORT_HINT
+def test_split_export_request(question, cleaned, formats):
+    assert split_export_request(question) == (cleaned, formats)
+
+
+def test_download_buttons_are_offered_only_when_there_is_something_to_download():
+    table = {"type": "table", "columns": ["a"], "rows": [[1]]}
+    document = {"type": "document", "title": "Makalah", "markdown": "# Makalah"}
+    assert offered_formats([], [table]) == []  # nobody asked: no buttons
+    assert offered_formats(["pdf"], [table]) == ["pdf"]
+    assert offered_formats(["xlsx", "pdf"], [table]) == ["xlsx", "pdf"]
+    assert offered_formats(["xlsx"], []) == []  # nothing tabular to put in a spreadsheet
+    assert offered_formats([], [document]) == ["pdf", "docx"]  # a written document is always downloadable
+    assert offered_formats(["docx"], [document]) == ["docx", "pdf"]
 
 
 @pytest.mark.parametrize(

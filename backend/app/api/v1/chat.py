@@ -17,7 +17,7 @@ from app.core.config import get_settings
 from app.db.models import ChatSession, Dataset, DocumentChunk, Message
 from app.db.session import SessionLocal
 from app.schemas import FileOut, MessageIn, SessionDetail, SessionOut
-from app.services import documents
+from app.services import documents, exports
 from app.services.agent import prompts
 from app.services.agent.executor import run_sql
 from app.services.agent.graph import stream_agent
@@ -33,21 +33,41 @@ QUOTA_TTL_SECONDS = 2 * 86400
 DEFAULT_TITLE = "Chat baru"
 MAX_FILES_PER_SESSION = 10
 
-# The agent cannot write files. A request such as "... dalam bentuk pdf" is answered normally and
-# pointed at the report button, instead of letting the LLM try to generate a PDF in the sandbox.
+# The agent itself cannot write files. Wording that asks for one ("... dalam bentuk pdf dan docx") is
+# taken out of the question, and the reply then offers exactly those formats as downloads.
+_FORMAT_WORDS = {
+    "pdf": "pdf",
+    "docx": "docx", "doc": "docx", "word": "docx",
+    "xlsx": "xlsx", "xls": "xlsx", "excel": "xlsx", "csv": "xlsx", "spreadsheet": "xlsx",
+}  # fmt: skip
+_LEAD_IN = r"(?:(?:dengan|dalam|ke|jadi|menjadi|sebagai|format|bentuk|berbentuk|file|berupa|via|lewat|output|hasilnya|dan|atau|&|,)\s*)*"
 _EXPORT_REQUEST = re.compile(
-    r"\b(?:(?:dengan|dalam|ke|jadi|menjadi|sebagai|format|bentuk|file|berupa|via|lewat)\s+)*"
-    r"(?:pdf|excel|xlsx|csv|word|docx|powerpoint|ppt)\b|\b(?:unduh|download|export|ekspor|cetak|print)\b",
-    re.IGNORECASE,
+    rf"\b{_LEAD_IN}\.?({'|'.join(_FORMAT_WORDS)})\b|\b(?:unduh|download|export|ekspor|cetak|print)\b", re.IGNORECASE
 )
-EXPORT_HINT = "Untuk menyimpannya sebagai file, gunakan tombol Unduh PDF di bawah jawaban ini."
+EXPORT_HINT = "File bisa diunduh lewat tombol di bawah jawaban ini."
 
 
-def split_export_request(question: str) -> tuple[str, bool]:
-    """Return the question without the file-export wording, and whether such wording was present."""
+def split_export_request(question: str) -> tuple[str, list[str]]:
+    """Return the question without the file-export wording, and the formats asked for (in order)."""
+    matches = list(_EXPORT_REQUEST.finditer(question))
+    formats: list[str] = []
+    for match in matches:
+        fmt = _FORMAT_WORDS.get((match.group(1) or "").lower())
+        if fmt and fmt not in formats:
+            formats.append(fmt)
+    if matches and not formats:  # "unduh" or "cetak" with no format named means PDF
+        formats = ["pdf"]
     cleaned = re.sub(r"\s{2,}", " ", _EXPORT_REQUEST.sub(" ", question)).strip(" ,.")
-    wants_file = cleaned != question.strip(" ,.")
-    return (cleaned if len(cleaned) >= 3 else question), wants_file
+    return (cleaned if len(cleaned) >= 3 else question), formats
+
+
+def offered_formats(requested: list[str], steps: list[dict]) -> list[str]:
+    """Which download buttons a reply gets: none unless a file was asked for or a document was written."""
+    kinds = {step.get("type") for step in steps}
+    formats = list(requested)
+    if "document" in kinds:  # a written document is a file by nature
+        formats += [f for f in ("pdf", "docx") if f not in formats]
+    return [f for f in formats if f != "xlsx" or "table" in kinds]  # a spreadsheet needs a result table
 
 
 async def _get_session(db: DbSession, user: CurrentUser, session_id: uuid.UUID) -> ChatSession:
@@ -259,7 +279,7 @@ async def send_message(
     await db.commit()
 
     agent = request.app.state.agent
-    question, wants_file = split_export_request(body.content)
+    question, requested_formats = split_export_request(body.content)
     initial = {"question": question, "usage": [], **state}
     message_id = uuid.uuid4()
 
@@ -273,7 +293,12 @@ async def send_message(
             try:
                 async for event, usage in stream_agent(agent, initial):
                     if event["type"] == "answer":
-                        if wants_file:
+                        formats = offered_formats(requested_formats, steps)
+                        if formats:
+                            # Sent before the answer so the buttons are known when the text arrives.
+                            files_event = {"type": "files", "formats": formats}
+                            steps.append(files_event)
+                            yield _sse(files_event)
                             event = {**event, "text": f"{event['text']}\n\n{EXPORT_HINT}"}
                         answer = event["text"]
                     steps.append(event)
@@ -307,8 +332,38 @@ async def send_message(
     )
 
 
-@router.get("/messages/{message_id}/pdf")
-async def message_pdf(message_id: uuid.UUID, user: CurrentUser, db: DbSession) -> Response:
+def _last(steps: list[dict], kind: str) -> dict | None:
+    return next((step for step in reversed(steps) if step.get("type") == kind), None)
+
+
+def build_export(fmt: str, question: str, message: Message, session_title: str) -> tuple[bytes, str]:
+    """Render one stored reply as a file. Returns (content, file name without extension)."""
+    steps = message.steps_json
+    document, table = _last(steps, "document"), _last(steps, "table")
+
+    if fmt == "xlsx":
+        if table is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Jawaban ini tidak memiliki tabel untuk diekspor")
+        return exports.render_xlsx(table["columns"], table["rows"]), exports.slug(session_title)
+
+    if document:  # a written document: the file is the document itself
+        render = exports.render_pdf if fmt == "pdf" else exports.render_docx
+        return render(document["markdown"]), exports.slug(document["title"])
+
+    if fmt == "pdf":  # an analysis answer: question, answer, chart, table and method
+        return build_pdf(question, message.content, steps, session_title, message.created_at), exports.slug(session_title)
+
+    answer = message.content.replace(f"\n\n{EXPORT_HINT}", "")
+    markdown = f"# {question}\n\n{answer}"
+    if table:
+        markdown += "\n\n## Data\n\n" + exports.table_as_markdown(table["columns"], table["rows"])
+    return exports.render_docx(markdown), exports.slug(session_title)
+
+
+@router.get("/messages/{message_id}/export")
+async def export_message(message_id: uuid.UUID, user: CurrentUser, db: DbSession, format: str = "pdf") -> Response:
+    if format not in exports.FORMATS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Format tidak didukung. Pilih pdf, docx, atau xlsx.")
     message = await db.get(Message, message_id)
     session = await db.get(ChatSession, message.session_id) if message else None
     if message is None or message.role != "assistant" or session is None or session.user_id != user.id:
@@ -320,11 +375,9 @@ async def message_pdf(message_id: uuid.UUID, user: CurrentUser, db: DbSession) -
         .order_by(Message.created_at.desc())
         .limit(1)
     )
-    pdf = await asyncio.to_thread(
-        build_pdf, question or "-", message.content, message.steps_json, session.title, message.created_at
-    )
+    content, name = await asyncio.to_thread(build_export, format, question or "-", message, session.title)
     return Response(
-        pdf,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="laporan-{str(message_id)[:8]}.pdf"'},
+        content,
+        media_type=exports.FORMATS[format][0],
+        headers={"Content-Disposition": f'attachment; filename="{name}.{format}"'},
     )

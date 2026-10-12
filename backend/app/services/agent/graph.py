@@ -8,6 +8,7 @@
            ├─ sentiment ► analyze_sentiment ─────────────────► summarize (or explain why not)
            ├─ forecast ─► run_forecast (LSTM vs baselines, answer built from the numbers)
            ├─ profile ──► describe_dataset (column profile, no LLM; chosen by a rule)
+           ├─ compose ──► write_document (a full paper, proposal or letter; exported as DOCX/PDF)
            └─ chat ─────► answer_chat
 
 A PDF session skips the table paths: route ─► answer_document (retrieve passages, answer with page citations).
@@ -33,7 +34,7 @@ from app.services.agent import prompts
 from app.services.agent.charts import suggest_chart
 from app.services.agent import forecast as forecasting
 from app.services.agent import profile as profiling
-from app.services import documents
+from app.services import documents, exports
 from app.services.agent.executor import ExecutionError, QueryResult, run_sql
 from app.services.agent.guardrail import GuardrailError, validate_sql
 from app.services.agent.sandbox_client import run_python
@@ -42,7 +43,9 @@ from app.services.agent.sentiment import analyze as analyze_text_sentiment
 from app.services.llm.base import LLMError, LLMResult
 from app.services.llm.router import LLMRouter
 
-Intent = Literal["sql", "python", "sentiment", "forecast", "profile", "doc_qa", "doc_summary", "doc_analysis", "chat"]
+Intent = Literal[
+    "sql", "python", "sentiment", "forecast", "profile", "doc_qa", "doc_summary", "doc_analysis", "compose", "chat"
+]
 SUMMARY_ROWS = 20
 
 DOC_SUMMARY_QUESTION = re.compile(
@@ -53,6 +56,24 @@ DOC_ANALYSIS_QUESTION = re.compile(
     r"\b(saran|sarankan|rekomendasi|rekomendasikan|evaluasi|kritik|kelemahan|kekurangan|kelebihan|perbaikan|perbaiki"
     r"|review|tinjau|nilai|penilaian|pendapat|menurutmu|analisis|analisa|risiko|masukan)\b"
 )
+# A request to write something, as opposed to a question about the data.
+_WRITE_VERB = r"(buat|buatkan|bikin|bikinkan|tulis|tuliskan|susun|susunkan|rancang|draf|draft|drafkan|ketik|ketikkan|kembangkan)"
+_ALWAYS_PROSE = (
+    r"(makalah|proposal|surat|artikel|esai|essay|paper|karya tulis|karya ilmiah|notulen|pidato|naskah|modul|panduan"
+    r"|cv|resume|kontrak|cerpen|puisi|press release|siaran pers|memo|pengumuman|rpp|silabus|skripsi)"
+)
+# "laporan" and "dokumen" are prose only when no table is attached; with a table they usually mean an analysis.
+_PROSE_WITHOUT_TABLE = r"(laporan|dokumen|ringkasan eksekutif|rencana|materi|tulisan|bab)"
+_CHART_WORDS = re.compile(r"\b(grafik|chart|diagram|plot|tabel|hitung|jumlahkan|total)\b")
+
+
+def is_writing_request(text: str, has_table: bool) -> bool:
+    if _CHART_WORDS.search(text):
+        return False
+    nouns = _ALWAYS_PROSE if has_table else f"({_ALWAYS_PROSE}|{_PROSE_WITHOUT_TABLE})"
+    return re.search(rf"\b{_WRITE_VERB}\b.*\b{nouns}\b", text) is not None
+
+
 DOCUMENT_WORDING = re.compile(
     r"\b(dokumen|pdf|gambar|foto|scan|halaman|surat|kontrak|perjanjian|sop|makalah|artikel|laporan|teks|tulisan|pasal|bab|lampiran)\b"
 )
@@ -81,8 +102,19 @@ class AgentState(TypedDict, total=False):
     previous_question: str
     file_note: str
     sources: list[dict]
+    document: dict
     answer: str
     usage: Annotated[list[dict], operator.add]
+
+
+def strip_fence(text: str) -> str:
+    """Models sometimes wrap a whole document in ```markdown ... ```; keep only the document."""
+    stripped = text.strip()
+    match = re.fullmatch(r"```(?:markdown|md)?\s*\n(.*)\n```", stripped, re.DOTALL)
+    # Only an outer wrapper is removed: a document that merely ends with a chart block is left alone.
+    if match and not match.group(1).lstrip().startswith("{"):
+        return match.group(1).strip()
+    return stripped
 
 
 def extract_code(text: str) -> str:
@@ -136,7 +168,11 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
         has_docs, has_table = bool(state.get("doc_chunks")), bool(state.get("db_path"))
         # No file yet, or a plain greeting: just talk. (The intent classifier is not used for this:
         # it was trained on table questions and labels "apa saranmu untuk dokumen ini" as small talk.)
-        if SMALL_TALK.fullmatch(text) or not (has_docs or has_table):
+        if SMALL_TALK.fullmatch(text):
+            return {"intent": "chat", "attempts": 0, "usage": []}
+        if is_writing_request(text, has_table):
+            return {"intent": "compose", "attempts": 0, "usage": [{"step": "route", "provider": "rule", "model": "compose"}]}
+        if not (has_docs or has_table):
             return {"intent": "chat", "attempts": 0, "usage": []}
         # With both a table and documents attached, wording decides which one the question is about.
         if has_docs and (not has_table or DOCUMENT_WORDING.search(text)):
@@ -291,6 +327,36 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
             "usage": _usage(out, intent) + [{"step": "context", "passages": len(passages), "files": len(file_names) or 1}],
         }
 
+    async def write_document(state: AgentState) -> dict:
+        """Write a complete document (paper, proposal, letter, ...) rather than a chat-sized answer."""
+        hosted = getattr(llm, "has_strong_model", False)
+        passages: list[tuple[str, int, str]] = []
+        if state.get("doc_chunks"):
+            chunks = [documents.Chunk(**c) for c in state["doc_chunks"]]
+            if hosted and documents.word_count(chunks) <= settings.doc_full_context_words:
+                passages = documents.page_texts(chunks)
+            else:
+                limit = documents.SUMMARY_EXCERPTS_HOSTED if hosted else documents.SUMMARY_EXCERPTS
+                passages = [(c.source, c.page, c.text) for c in documents.summary_excerpts(chunks, limit)[0]]
+
+        system = prompts.COMPOSE_SYSTEM.format(
+            length=prompts.COMPOSE_LENGTH_HOSTED if hosted else prompts.COMPOSE_LENGTH_LOCAL
+        )
+        request = prompts.document_request(state["question"], passages, state.get("history", ""))
+        # A CPU model writes about 7 tokens per second, so it can only draft a short version in time.
+        out = await llm.complete("complex", system, [{"role": "user", "content": request}], 6000 if hosted else 520)
+        markdown = strip_fence(out.text)
+        title, words = exports.document_title(markdown), exports.word_count(markdown)
+        answer = f'Dokumen "{title}" selesai ditulis (sekitar {exports.format_count(words)} kata).'
+        if not hosted:
+            answer += " Ini versi ringkas dari model lokal; untuk dokumen panjang dan lengkap, aktifkan API LLM."
+        answer += " Periksa kembali fakta, angka, dan rujukannya sebelum dipakai."
+        return {
+            "document": {"title": title, "markdown": markdown, "words": words},
+            "answer": answer,
+            "usage": _usage(out, "compose"),
+        }
+
     async def describe_dataset(state: AgentState) -> dict:
         table, answer = await asyncio.to_thread(profiling.describe, Path(state["db_path"]))
         return {**_finish(table), "chart": None, "answer": answer}
@@ -333,6 +399,7 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
     graph.add_node("run_forecast", run_forecast)
     graph.add_node("describe_dataset", describe_dataset)
     graph.add_node("answer_document", answer_document)
+    graph.add_node("write_document", write_document)
     graph.add_node("answer_chat", answer_chat)
     graph.add_node("fail", fail)
 
@@ -341,7 +408,8 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
         "route",
         lambda s: s["intent"],
         {"sql": "generate_sql", "python": "generate_python", "sentiment": "analyze_sentiment", "forecast": "run_forecast", "profile": "describe_dataset", "chat": "answer_chat",
-         "doc_qa": "answer_document", "doc_summary": "answer_document", "doc_analysis": "answer_document"},
+         "doc_qa": "answer_document", "doc_summary": "answer_document", "doc_analysis": "answer_document",
+         "compose": "write_document"},
     )
     graph.add_conditional_edges(
         "analyze_sentiment", lambda s: END if s.get("answer") else "summarize", ["summarize", END]
@@ -352,7 +420,7 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
     graph.add_conditional_edges(
         "execute_python", after_execute("generate_python"), ["generate_python", "summarize", "fail"]
     )
-    for terminal in ("summarize", "answer_chat", "fail", "run_forecast", "describe_dataset", "answer_document"):
+    for terminal in ("summarize", "answer_chat", "fail", "run_forecast", "describe_dataset", "answer_document", "write_document"):
         graph.add_edge(terminal, END)
     return graph.compile()
 
@@ -385,6 +453,8 @@ def _events_for(node: str, update: dict) -> list[dict]:
         if update.get("answer"):
             events.append({"type": "answer", "text": update["answer"]})
         return events
+    if node == "write_document":
+        return [{"type": "document", **update["document"]}, {"type": "answer", "text": update["answer"]}]
     if node in ("summarize", "answer_chat", "fail"):
         return [{"type": "answer", "text": update["answer"]}]
     return []

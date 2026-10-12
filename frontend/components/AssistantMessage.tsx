@@ -5,7 +5,7 @@ import { Markdown } from "@/components/Markdown";
 import { ResultChart } from "@/components/ResultChart";
 import { useState } from "react";
 
-import { downloadReport, type AgentEvent, type TableEvent } from "@/lib/api";
+import { downloadExport, type AgentEvent, type ExportFormat, type TableEvent } from "@/lib/api";
 
 const INTENT_LABEL = {
   sql: "Query SQL",
@@ -16,8 +16,11 @@ const INTENT_LABEL = {
   doc_qa: "Tanya Dokumen",
   doc_summary: "Ringkasan Dokumen",
   doc_analysis: "Telaah Dokumen",
+  compose: "Menulis Dokumen",
   chat: "Obrolan",
 } as const;
+
+const FORMAT_LABEL: Record<ExportFormat, string> = { pdf: "PDF", docx: "Word", xlsx: "Excel" };
 
 function progressLabel(steps: AgentEvent[]): string {
   const last = steps.at(-1);
@@ -26,6 +29,7 @@ function progressLabel(steps: AgentEvent[]): string {
     case "intent":
       if (last.value === "chat") return "Menyusun jawaban...";
       if (last.value === "forecast") return "Melatih model prediksi dan menguji akurasinya...";
+      if (last.value === "compose") return "Menulis dokumen lengkap. Ini bisa memakan 1 sampai 2 menit...";
       if (last.value === "doc_qa") return "Mencari bagian dokumen yang relevan...";
       if (last.value === "doc_summary" || last.value === "doc_analysis") return "Membaca dokumen...";
       return last.value === "sentiment" ? "Membaca dan menilai teks..." : "Menulis kode analisis...";
@@ -53,19 +57,19 @@ function sourceSummary(items: { file?: string; page: number }[]): string {
 type Props = { steps: AgentEvent[]; pending: boolean; messageId?: string };
 
 export function AssistantMessage({ steps, pending, messageId }: Props) {
-  const [downloading, setDownloading] = useState(false);
+  const [downloading, setDownloading] = useState<ExportFormat | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
 
-  async function download() {
+  async function download(format: ExportFormat) {
     if (!messageId) return;
-    setDownloading(true);
+    setDownloading(format);
     setDownloadError(null);
     try {
-      await downloadReport(messageId);
+      await downloadExport(messageId, format);
     } catch {
-      setDownloadError("Laporan gagal dibuat. Coba lagi.");
+      setDownloadError("File gagal dibuat. Coba lagi.");
     } finally {
-      setDownloading(false);
+      setDownloading(null);
     }
   }
 
@@ -77,6 +81,9 @@ export function AssistantMessage({ steps, pending, messageId }: Props) {
   const value = steps.findLast((s) => s.type === "value");
   const samples = steps.findLast((s) => s.type === "samples");
   const sources = steps.findLast((s) => s.type === "sources");
+  const written = steps.findLast((s) => s.type === "document");
+  // Download buttons appear only when the user asked for a file, or a document was written.
+  const formats = steps.findLast((s) => s.type === "files")?.formats ?? [];
   const process = steps.filter((s) => s.type === "code" || s.type === "retry" || s.type === "stdout");
   const attempts = process.filter((s) => s.type === "code").length;
 
@@ -103,6 +110,11 @@ export function AssistantMessage({ steps, pending, messageId }: Props) {
         )
       )}
 
+      {written && (
+        <article className="max-h-[32rem] overflow-y-auto rounded-lg border border-border bg-background p-4 sm:p-6">
+          <Markdown text={written.markdown} />
+        </article>
+      )}
       {chart && table && <ResultChart spec={chart.spec} table={table} />}
       {table && <DataTable table={table} />}
       {samples && samples.items.length > 0 && (
@@ -177,15 +189,18 @@ export function AssistantMessage({ steps, pending, messageId }: Props) {
         </details>
       )}
 
-      {messageId && answer && !pending && (
-        <div className="flex items-center gap-3 pt-1">
-          <button
-            onClick={download}
-            disabled={downloading}
-            className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:border-accent disabled:opacity-60"
-          >
-            {downloading ? "Menyiapkan PDF..." : "Unduh PDF"}
-          </button>
+      {messageId && formats.length > 0 && !pending && (
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          {formats.map((format) => (
+            <button
+              key={format}
+              onClick={() => download(format)}
+              disabled={downloading !== null}
+              className="rounded-lg border border-border px-3 py-1.5 text-xs font-medium hover:border-accent disabled:opacity-60"
+            >
+              {downloading === format ? "Menyiapkan..." : `Unduh ${FORMAT_LABEL[format]}`}
+            </button>
+          ))}
           {downloadError && (
             <span role="alert" className="text-xs text-red-600 dark:text-red-400">
               {downloadError}

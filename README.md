@@ -2,7 +2,7 @@
 
 Asisten analisis data berbasis AI agent. User membuka chat, melampirkan CSV/Excel, PDF, atau foto dokumen (bisa beberapa file per chat), lalu bertanya dalam Bahasa Indonesia; agent menulis SQL/Python, menjalankannya dengan aman, dan menjawab dengan tabel, grafik, dan insight.
 
-> Status: agent LangGraph dalam sesi chat dengan banyak lampiran: data tabel (SQL, Python sandbox, sentimen IndoBERT, forecasting LSTM), dokumen PDF, dan gambar/PDF hasil scan lewat OCR. Laporan PDF, LLM lokal atau API (DeepSeek/Claude), live di VPS. Berikutnya: CI/CD dan monitoring.
+> Status: agent LangGraph dalam sesi chat dengan banyak lampiran: data tabel (SQL, Python sandbox, sentimen IndoBERT, forecasting LSTM), dokumen PDF dan gambar (OCR + vision), serta penulisan dokumen lengkap dengan tabel dan grafik yang diekspor ke Word/PDF. LLM lokal atau API (DeepSeek/Claude), live di VPS. Berikutnya: CI/CD dan monitoring.
 
 ## Cara kerja agent
 
@@ -20,7 +20,7 @@ pertanyaan ─► route ─┬─ sql ───────► generate_sql ─�
 - **DuckDB read-only**: akses file eksternal dimatikan dan konfigurasinya dikunci, query dihentikan setelah 15 detik.
 - **Python sandbox**: container terpisah tanpa internet, filesystem read-only, non-root, tanpa capability; setiap eksekusi berjalan di subprocess baru dengan batas CPU 30 detik, RAM 1,5 GB, dan file 10 MB.
 - **Forecast service**: container TensorFlow terpisah tanpa internet dan read-only; hanya menerima deret angka hasil agregasi, bukan data mentah.
-- **Laporan PDF**: setiap jawaban bisa diunduh sebagai PDF (pertanyaan, jawaban, grafik, tabel, cara perhitungan) yang dibuat server dari langkah agent yang tersimpan, bukan oleh LLM. Permintaan seperti "buatkan dalam PDF" dijawab normal lalu diarahkan ke tombol ini.
+- **Ekspor atas permintaan**: jika pertanyaan meminta file ("... dalam pdf", "export ke excel"), jawabannya diberi tombol unduh untuk format itu saja; file dibuat server dari langkah agent yang tersimpan, bukan oleh LLM.
 - **Ringkasan dataset**: pertanyaan "ringkas isi data ini" dijawab dari profil kolom tanpa LLM.
 - **Streaming**: setiap langkah agent (intent, kode, tabel, grafik, jawaban) dikirim lewat SSE dan disimpan agar riwayat chat tampil sama persis.
 
@@ -34,6 +34,15 @@ Satu chat bisa dipakai tanpa file, dan bisa dilampiri sampai 10 file kapan saja 
 - **Tabel**: jika satu chat berisi beberapa tabel, yang dianalisis adalah yang terakhir dilampirkan. Menggabungkan beberapa tabel belum didukung.
 - **Chat berisi tabel dan dokumen**: kata di pertanyaan menentukan tujuannya ("dokumen", "halaman", "kontrak", "gambar" mengarah ke dokumen; selain itu ke tabel).
 - Menghapus satu file tidak menghapus percakapannya; menghapus chat menghapus semua file dan pesannya.
+
+## Menulis dokumen dan ekspor file
+
+Permintaan seperti "buatkan makalah / proposal / surat tentang ..." masuk ke jalur `compose`: LLM menulis dokumen utuh (judul, bab, paragraf berisi), bukan jawaban sepanjang chat. Jika ada file dilampirkan, isinya menjadi sumber utama.
+
+- **Tabel dan grafik tanpa diminta.** Prompt meminta tabel Markdown untuk perbandingan dan blok `chart` (JSON: jenis, label, nilai) untuk angka. Grafiknya digambar aplikasi, bukan model: Recharts di chat, gambar PNG (Pillow) di Word dan PDF, dengan palet dan aturan yang sama. Batang untuk membandingkan nilai, donat untuk komposisi; donat lebih dari 6 bagian dilipat ke "Lainnya"; blok yang cacat dibuang, tidak ditebak.
+- **Asal angka selalu tertulis.** Setiap grafik membawa `source`: `dokumen` (angka dari file yang dilampirkan) atau `perkiraan` (pengetahuan umum model). Yang kedua diberi keterangan "Angka perkiraan, perlu diverifikasi" di ketiga tampilan. Prompt juga melarang mengarang kutipan, nama penulis, statistik, dan daftar pustaka.
+- **Ekspor.** Tombol unduh hanya muncul jika user meminta file (PDF, Word, Excel) atau sebuah dokumen ditulis. File Word/PDF dirender dari blok dokumen yang sama (heading, paragraf rata kiri-kanan, daftar, tabel, grafik, nomor halaman). Excel berisi tabel hasil analisis.
+- **Batasan.** Dokumen ditulis dalam satu respons tanpa streaming, jadi user menunggu sekitar 1 sampai 2 menit. Dengan LLM lokal hanya versi ringkas (sekitar 300 kata) yang muat dalam batas waktu, dan jawabannya mengatakan itu. Data tabel yang dilampirkan belum dipakai sebagai bahan tulisan.
 
 ## Dokumen PDF (RAG)
 
@@ -119,7 +128,9 @@ backend/                FastAPI
   app/services/vision.py      model vision untuk gambar yang tidak terbaca jelas oleh OCR
   app/services/uploads.py     penyimpanan file yang dilampirkan
   app/db/migrate.py           migrasi skema ringan saat startup
-  app/services/report.py      pembuat laporan PDF
+  app/services/report.py      laporan PDF untuk jawaban analisis
+  app/services/exports.py     dokumen ke Word/PDF, tabel ke Excel
+  app/services/chart_image.py penggambar grafik dokumen (PNG)
   app/ml/               normalisasi teks Indonesia + pemuat model
   models/               model terlatih (intent, sentimen)
   tests/
@@ -188,7 +199,7 @@ Gunakan `local` selama development. API key baru diisi saat siap live demo; kedu
 | GET | `/api/v1/chat/sessions` | Daftar sesi |
 | GET | `/api/v1/chat/sessions/{id}` | Riwayat pesan beserta langkah agent |
 | POST | `/api/v1/chat/sessions/{id}/messages` | Kirim pertanyaan, jawaban di-stream (SSE); kuota harian per user |
-| GET | `/api/v1/chat/messages/{id}/pdf` | Unduh laporan PDF untuk satu jawaban |
+| GET | `/api/v1/chat/messages/{id}/export?format=pdf\|docx\|xlsx` | Unduh satu jawaban sebagai file |
 | GET | `/api/v1/health` | Status database, redis, mode LLM |
 
 ## Tes

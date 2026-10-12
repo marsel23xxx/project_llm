@@ -1,15 +1,43 @@
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
-/** Renders the light Markdown that LLM answers use. Raw HTML in the text is not rendered. */
+import { DocChart, parseChart, type DocChartSpec } from "@/components/DocChart";
+
+const CHART_BLOCK = /```chart[ \t]*\n([\s\S]*?)\n[ \t]*```/g;
+
+/** Split text into Markdown parts and the chart blocks written between them. */
+function segments(text: string): ({ kind: "text"; value: string } | { kind: "chart"; spec: DocChartSpec })[] {
+  const parts: ReturnType<typeof segments> = [];
+  let cursor = 0;
+  for (const match of text.matchAll(CHART_BLOCK)) {
+    if (match.index > cursor) parts.push({ kind: "text", value: text.slice(cursor, match.index) });
+    const spec = parseChart(match[1]);
+    if (spec) parts.push({ kind: "chart", spec });
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < text.length) parts.push({ kind: "text", value: text.slice(cursor) });
+  return parts;
+}
+
+/** Renders the light Markdown that LLM answers use, plus chart blocks. Raw HTML in the text is not rendered. */
 export function Markdown({ text }: { text: string }) {
   return (
     <div className="space-y-3 leading-relaxed">
+      {segments(text).map((part, i) =>
+        part.kind === "chart" ? <DocChart key={i} spec={part.spec} /> : <MarkdownText key={i} text={part.value} />,
+      )}
+    </div>
+  );
+}
+
+function MarkdownText({ text }: { text: string }) {
+  return (
+    <>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          h1: ({ children }) => <h3 className="text-base font-semibold">{children}</h3>,
-          h2: ({ children }) => <h3 className="text-base font-semibold">{children}</h3>,
+          h1: ({ children }) => <h2 className="text-lg font-semibold">{children}</h2>,
+          h2: ({ children }) => <h3 className="pt-2 text-base font-semibold">{children}</h3>,
           h3: ({ children }) => <h4 className="font-semibold">{children}</h4>,
           ul: ({ children }) => <ul className="list-disc space-y-1 pl-5 marker:text-muted">{children}</ul>,
           ol: ({ children }) => <ol className="list-decimal space-y-1 pl-5 marker:text-muted">{children}</ol>,
@@ -40,6 +68,6 @@ export function Markdown({ text }: { text: string }) {
       >
         {text}
       </ReactMarkdown>
-    </div>
+    </>
   );
 }

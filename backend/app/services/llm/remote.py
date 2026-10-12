@@ -12,8 +12,9 @@ class RemoteProvider:
 
     name = "remote"
 
-    def __init__(self, base_url: str, api_key: str, model: str, disable_thinking: bool = True, timeout: float = 90.0):
+    def __init__(self, base_url: str, api_key: str, model: str, disable_thinking: bool = True, timeout: float = 240.0):
         self._model = model
+        # The timeout covers writing a full document (thousands of output tokens) in one response.
         # Reasoning tokens are billed as output and add latency; SQL generation and short grounded
         # answers do not need them. DeepSeek enables thinking unless told otherwise.
         self._extra = {"thinking": {"type": "disabled"}} if disable_thinking else {}

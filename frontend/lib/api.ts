@@ -16,6 +16,8 @@ export type SessionFile = {
 
 export type ChatSession = { id: string; title: string; created_at: string; files: SessionFile[] };
 
+export type ExportFormat = "pdf" | "docx" | "xlsx";
+
 export type ChartSpec = { kind: "bar" | "line"; x: string; y: string[]; dashed?: string[] };
 
 export type TableEvent = {
@@ -27,7 +29,7 @@ export type TableEvent = {
 };
 
 export type AgentEvent =
-  | { type: "intent"; value: "sql" | "python" | "sentiment" | "forecast" | "profile" | "doc_qa" | "doc_summary" | "doc_analysis" | "chat" }
+  | { type: "intent"; value: "sql" | "python" | "sentiment" | "forecast" | "profile" | "doc_qa" | "doc_summary" | "doc_analysis" | "compose" | "chat" }
   | { type: "code"; language: "sql" | "python"; value: string; attempt: number }
   | { type: "retry"; error: string }
   | TableEvent
@@ -36,6 +38,8 @@ export type AgentEvent =
   | { type: "chart"; spec: ChartSpec }
   | { type: "samples"; items: { label: string; text: string }[] }
   | { type: "sources"; items: { file?: string; page: number; text: string }[] }
+  | { type: "document"; title: string; markdown: string; words: number }
+  | { type: "files"; formats: ExportFormat[] }
   | { type: "answer"; text: string }
   | { type: "error"; message: string }
   | { type: "done"; latency_ms: number; message_id?: string };
@@ -134,14 +138,15 @@ export async function streamMessage(sessionId: string, content: string, onEvent:
   }
 }
 
-/** Fetch the PDF report for one stored answer and hand it to the browser as a download. */
-export async function downloadReport(messageId: string) {
-  const res = await send(`/chat/messages/${messageId}/pdf`, { method: "GET" });
+/** Fetch one stored answer as a file and hand it to the browser as a download. */
+export async function downloadExport(messageId: string, format: ExportFormat) {
+  const res = await send(`/chat/messages/${messageId}/export?format=${format}`, { method: "GET" });
   if (!res.ok) throw await errorFrom(res);
+  const name = /filename="([^"]+)"/.exec(res.headers.get("Content-Disposition") ?? "")?.[1] ?? `hasil.${format}`;
   const url = URL.createObjectURL(await res.blob());
   const link = document.createElement("a");
   link.href = url;
-  link.download = `laporan-${messageId.slice(0, 8)}.pdf`;
+  link.download = name;
   link.click();
   URL.revokeObjectURL(url);
 }
