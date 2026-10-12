@@ -53,6 +53,9 @@ DOC_ANALYSIS_QUESTION = re.compile(
     r"\b(saran|sarankan|rekomendasi|rekomendasikan|evaluasi|kritik|kelemahan|kekurangan|kelebihan|perbaikan|perbaiki"
     r"|review|tinjau|nilai|penilaian|pendapat|menurutmu|analisis|analisa|risiko|masukan)\b"
 )
+DOCUMENT_WORDING = re.compile(
+    r"\b(dokumen|pdf|gambar|foto|scan|halaman|surat|kontrak|perjanjian|sop|makalah|artikel|laporan|teks|tulisan|pasal|bab|lampiran)\b"
+)
 # Whole-message matches only: "halo, apa isi dokumen ini" is a question, not a greeting.
 SMALL_TALK = re.compile(
     r"(halo|hai|hi|hello|pagi|siang|sore|malam|selamat (pagi|siang|sore|malam)|terima kasih( banyak)?|oke|ok|sip|mantap|siap|tes|test)"
@@ -129,13 +132,14 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
     sentiment_model = ml.sentiment if ml else None
 
     async def route(state: AgentState) -> dict:
-        if state.get("doc_chunks") is not None:
-            # A document has no table to query. Everything is about the document unless it is plainly
-            # a greeting or thanks; the intent classifier was trained on table questions and mislabels
-            # requests such as "apa saranmu untuk dokumen ini" as small talk.
-            text = normalize(state["question"])
-            if SMALL_TALK.fullmatch(text):
-                return {"intent": "chat", "attempts": 0, "usage": []}
+        text = normalize(state["question"])
+        has_docs, has_table = bool(state.get("doc_chunks")), bool(state.get("db_path"))
+        # No file yet, or a plain greeting: just talk. (The intent classifier is not used for this:
+        # it was trained on table questions and labels "apa saranmu untuk dokumen ini" as small talk.)
+        if SMALL_TALK.fullmatch(text) or not (has_docs or has_table):
+            return {"intent": "chat", "attempts": 0, "usage": []}
+        # With both a table and documents attached, wording decides which one the question is about.
+        if has_docs and (not has_table or DOCUMENT_WORDING.search(text)):
             if DOC_SUMMARY_QUESTION.search(text):
                 intent = "doc_summary"
             elif DOC_ANALYSIS_QUESTION.search(text):
@@ -236,7 +240,9 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
         chunks = [documents.Chunk(**c) for c in state["doc_chunks"]]
         question, intent = state["question"], state["intent"]
         hosted = getattr(llm, "has_strong_model", False)
-        total_pages = chunks[-1].page
+        file_names = list(dict.fromkeys(c.source for c in chunks if c.source))
+        pages = len({(c.source, c.page) for c in chunks})
+        described = f"{len(file_names)} file ({pages} halaman)" if len(file_names) > 1 else f"dokumen ({pages} halaman)"
         sources: list[dict] = []
         history = state.get("history", "")
 
@@ -246,20 +252,20 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
             # The document comes first in the prompt so repeat questions hit the provider's prompt cache.
             passages = documents.page_texts(chunks)
             system = prompts.DOC_FULL_SYSTEM
-            note = f"Jawaban dibuat dari seluruh dokumen ({total_pages} halaman)."
+            note = f"Jawaban dibuat dari seluruh isi {described}."
             max_tokens = 1500
         elif intent in ("doc_summary", "doc_analysis"):
             limit = documents.SUMMARY_EXCERPTS_HOSTED if hosted else documents.SUMMARY_EXCERPTS
             picked, sampled = documents.summary_excerpts(chunks, limit)
-            passages = [(c.page, c.text) for c in picked]
+            passages = [(c.source, c.page, c.text) for c in picked]
             what = "Ringkasan" if intent == "doc_summary" else "Jawaban"
             if sampled:
                 note = (
-                    f"Dokumen {total_pages} halaman terlalu panjang untuk dibaca sekaligus; {what.lower()} dibuat dari "
-                    f"{len(picked)} cuplikan yang tersebar dari halaman {picked[0].page} sampai {picked[-1].page}."
+                    f"Isi {described} terlalu panjang untuk dibaca sekaligus; {what.lower()} dibuat dari "
+                    f"{len(picked)} cuplikan yang tersebar merata."
                 )
             else:
-                note = f"{what} dibuat dari seluruh dokumen ({total_pages} halaman)."
+                note = f"{what} dibuat dari seluruh isi {described}."
             system = prompts.DOC_SUMMARY_SYSTEM if intent == "doc_summary" else prompts.DOC_ANALYSIS_SYSTEM
             # A CPU model writes about 7 tokens per second; a long answer would outlast the request timeout.
             max_tokens = 900 if hosted else 320
@@ -271,9 +277,9 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
             if not hits:
                 return {"answer": "Saya tidak menemukan bagian dokumen yang berkaitan dengan pertanyaan itu.", "sources": []}
             picked = [chunk for chunk, _ in hits]
-            passages = [(c.page, c.text) for c in picked]
+            passages = [(c.source, c.page, c.text) for c in picked]
             # Shown strongest first, the reverse of the order the model reads them in.
-            sources = [{"page": c.page, "text": c.text[:400]} for c in reversed(picked)]
+            sources = [{"file": c.source, "page": c.page, "text": c.text[:400]} for c in reversed(picked)]
             system, note, max_tokens = prompts.DOC_QA_SYSTEM, "", 600
 
         request = prompts.document_request(question, passages, history)
@@ -282,7 +288,7 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
             "answer": out.text.strip(),
             "sources": sources,
             "result": {"columns": [], "types": [], "rows": [], "truncated": False, "stdout": note, "value": None, "type": "table"},
-            "usage": _usage(out, intent) + [{"step": "context", "pages": sorted({page for page, _ in passages})}],
+            "usage": _usage(out, intent) + [{"step": "context", "passages": len(passages), "files": len(file_names) or 1}],
         }
 
     async def describe_dataset(state: AgentState) -> dict:
@@ -299,8 +305,11 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
 
     async def answer_chat(state: AgentState) -> dict:
         system = prompts.CHAT_SYSTEM + (f"\n{state['file_note']}" if state.get("file_note") else "")
+        content = state["question"]
+        if state.get("history"):
+            content = f"<riwayat>\n{state['history']}\n</riwayat>\n\n{content}"
         try:
-            out = await llm.complete("simple", system, [{"role": "user", "content": state["question"]}], 400)
+            out = await llm.complete("simple", system, [{"role": "user", "content": content}], 600)
         except LLMError:
             return {"answer": "Halo! Silakan tanyakan sesuatu tentang dataset yang kamu unggah.", "usage": []}
         return {"answer": out.text.strip(), "usage": _usage(out, "chat")}

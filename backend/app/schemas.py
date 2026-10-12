@@ -54,20 +54,23 @@ class DatasetUploaded(DatasetOut):
     profile: DatasetProfile
 
 
-class SessionCreate(BaseModel):
-    dataset_id: uuid.UUID
+class FileOut(BaseModel):
+    """A file attached to a chat session."""
+
+    id: uuid.UUID
+    name: str
+    kind: str  # "table" or "document"
+    source: str  # "csv", "xlsx", "pdf" or "image"
+    size: int  # rows for a table, pages for a document
+    ocr_pages: int
+    expires_at: datetime
 
 
 class SessionOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
     id: uuid.UUID
-    dataset_id: uuid.UUID
     title: str
-    kind: str = "table"
-    # Rows for a table, pages for a document.
-    size: int = 0
     created_at: datetime
+    files: list[FileOut] = []
 
 
 class MessageIn(BaseModel):

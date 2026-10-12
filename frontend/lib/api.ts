@@ -1,22 +1,18 @@
 export type User = { id: string; email: string; role: string; created_at: string };
 
-export type Dataset = {
+export type SessionFile = {
   id: string;
-  original_filename: string;
-  row_count: number;
-  created_at: string;
+  name: string;
+  kind: "table" | "document";
+  source: "csv" | "xlsx" | "pdf" | "image";
+  /** Rows for a table, pages for a document. */
+  size: number;
+  /** Pages (or the image) read with OCR. */
+  ocr_pages: number;
   expires_at: string;
 };
 
-export type ChatSession = {
-  id: string;
-  dataset_id: string;
-  title: string;
-  kind: "table" | "document";
-  /** Rows for a table, pages for a document. */
-  size: number;
-  created_at: string;
-};
+export type ChatSession = { id: string; title: string; created_at: string; files: SessionFile[] };
 
 export type ChartSpec = { kind: "bar" | "line"; x: string; y: string[]; dashed?: string[] };
 
@@ -37,7 +33,7 @@ export type AgentEvent =
   | { type: "stdout"; value: string }
   | { type: "chart"; spec: ChartSpec }
   | { type: "samples"; items: { label: string; text: string }[] }
-  | { type: "sources"; items: { page: number; text: string }[] }
+  | { type: "sources"; items: { file?: string; page: number; text: string }[] }
   | { type: "answer"; text: string }
   | { type: "error"; message: string }
   | { type: "done"; latency_ms: number; message_id?: string };
@@ -99,18 +95,16 @@ export const api = {
     request<User>("/auth/register", { method: "POST", body: JSON.stringify({ email, password }) }),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
 
-  datasets: () => request<Dataset[]>("/datasets"),
-  deleteDataset: (id: string) => request<void>(`/datasets/${id}`, { method: "DELETE" }),
-  upload: (file: File) => {
+  sessions: () => request<ChatSession[]>("/chat/sessions"),
+  createSession: () => request<ChatSession>("/chat/sessions", { method: "POST" }),
+  session: (id: string) => request<ChatSession & { messages: StoredMessage[] }>(`/chat/sessions/${id}`),
+  deleteSession: (id: string) => request<void>(`/chat/sessions/${id}`, { method: "DELETE" }),
+  attachFile: (sessionId: string, file: File) => {
     const form = new FormData();
     form.append("file", file);
-    return request<Dataset>("/datasets", { method: "POST", body: form });
+    return request<SessionFile>(`/chat/sessions/${sessionId}/files`, { method: "POST", body: form });
   },
-
-  sessions: () => request<ChatSession[]>("/chat/sessions"),
-  createSession: (datasetId: string) =>
-    request<ChatSession>("/chat/sessions", { method: "POST", body: JSON.stringify({ dataset_id: datasetId }) }),
-  session: (id: string) => request<ChatSession & { messages: StoredMessage[] }>(`/chat/sessions/${id}`),
+  removeFile: (fileId: string) => request<void>(`/datasets/${fileId}`, { method: "DELETE" }),
 };
 
 /** POST a question and call `onEvent` for each server-sent agent event as it arrives. */

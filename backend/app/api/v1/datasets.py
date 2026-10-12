@@ -1,23 +1,17 @@
 import asyncio
-import tempfile
 import uuid
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, UploadFile, status
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession
-from app.core.config import get_settings
-from app.db.models import Dataset, DocumentChunk
+from app.db.models import Dataset
 from app.schemas import DatasetOut, DatasetProfile, DatasetUploaded
-from app.services.data.ingest import SUPPORTED_SUFFIXES, IngestError, load_dataframe, write_duckdb
 from app.services.data.profiling import profile_table
-from app.services.documents import DocumentError, chunk_pages, extract_pages
+from app.services.uploads import remove_files, store_upload
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
-
-CHUNK_SIZE = 1024 * 1024
 
 
 async def _get_owned(db: DbSession, user: CurrentUser, dataset_id: uuid.UUID) -> Dataset:
@@ -27,80 +21,10 @@ async def _get_owned(db: DbSession, user: CurrentUser, dataset_id: uuid.UUID) ->
     return dataset
 
 
-def _ingest(upload_path: Path, db_path: Path) -> tuple[int, dict]:
-    df = load_dataframe(upload_path)
-    row_count = write_duckdb(df, db_path)
-    return row_count, profile_table(db_path)
-
-
 @router.post("", response_model=DatasetUploaded, status_code=status.HTTP_201_CREATED)
 async def upload_dataset(file: UploadFile, user: CurrentUser, db: DbSession) -> dict:
-    settings = get_settings()
-    suffix = Path(file.filename or "").suffix.lower()
-    if suffix not in SUPPORTED_SUFFIXES | {".pdf"}:
-        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Hanya file CSV, XLSX, atau PDF yang didukung")
-
-    max_bytes = settings.max_upload_mb * 1024 * 1024
-    dataset_id = uuid.uuid4()
-    db_path = Path(settings.data_dir) / "duckdb" / str(user.id) / f"{dataset_id}.duckdb"
-
-    with tempfile.TemporaryDirectory() as tmp:
-        upload_path = Path(tmp) / f"upload{suffix}"
-        size = 0
-        with upload_path.open("wb") as out:
-            while chunk := await file.read(CHUNK_SIZE):
-                size += len(chunk)
-                if size > max_bytes:
-                    raise HTTPException(
-                        status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, f"Ukuran file maksimal {settings.max_upload_mb} MB"
-                    )
-                out.write(chunk)
-        if suffix == ".pdf":
-            return await _store_document(db, user, dataset_id, file.filename, upload_path)
-        try:
-            # pandas/DuckDB are blocking; keep the event loop free for other users.
-            row_count, profile = await asyncio.to_thread(_ingest, upload_path, db_path)
-        except IngestError as exc:
-            db_path.unlink(missing_ok=True)
-            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-
-    dataset = Dataset(
-        id=dataset_id,
-        user_id=user.id,
-        original_filename=file.filename,
-        duckdb_path=str(db_path),
-        row_count=row_count,
-        schema_json=profile["columns"],
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=settings.dataset_ttl_hours),
-    )
-    db.add(dataset)
-    await db.commit()
-    await db.refresh(dataset)
-    return {**DatasetOut.model_validate(dataset).model_dump(), "profile": profile}
-
-
-async def _store_document(db: DbSession, user: CurrentUser, dataset_id: uuid.UUID, filename: str, path: Path) -> dict:
-    try:
-        pages = await asyncio.to_thread(extract_pages, path)
-    except DocumentError as exc:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
-    chunks = chunk_pages(pages)
-
-    dataset = Dataset(
-        id=dataset_id,
-        user_id=user.id,
-        original_filename=filename,
-        kind="document",
-        duckdb_path="",
-        row_count=len(pages),
-        schema_json=[],
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=get_settings().dataset_ttl_hours),
-    )
-    db.add(dataset)
-    db.add_all(DocumentChunk(dataset_id=dataset_id, page=c.page, position=c.position, text=c.text) for c in chunks)
-    await db.commit()
-    await db.refresh(dataset)
-    profile = {"row_count": len(pages), "columns": [], "sample": []}
+    """Upload a file without a chat session. The app itself uploads through /chat/sessions/{id}/files."""
+    dataset, profile = await store_upload(db, user.id, file)
     return {**DatasetOut.model_validate(dataset).model_dump(), "profile": profile}
 
 
@@ -120,8 +44,8 @@ async def get_profile(dataset_id: uuid.UUID, user: CurrentUser, db: DbSession) -
 
 @router.delete("/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_dataset(dataset_id: uuid.UUID, user: CurrentUser, db: DbSession) -> None:
+    """Remove one file. The chat session it was attached to, and its messages, stay."""
     dataset = await _get_owned(db, user, dataset_id)
-    if dataset.duckdb_path:
-        Path(dataset.duckdb_path).unlink(missing_ok=True)
+    remove_files(dataset)
     await db.delete(dataset)
     await db.commit()

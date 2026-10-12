@@ -25,8 +25,16 @@ class Dataset(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    # The chat session this file was attached to. A session can hold many files.
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("chat_sessions.id", ondelete="CASCADE"), index=True, default=None
+    )
     original_filename: Mapped[str] = mapped_column(String(255))
-    # "table": CSV/XLSX loaded into DuckDB. "document": PDF text stored as chunks (duckdb_path is empty).
+    # What was uploaded: "csv", "xlsx", "pdf" or "image".
+    source: Mapped[str] = mapped_column(String(16), default="", server_default="")
+    # Pages (or the image) whose text came from OCR rather than embedded text.
+    ocr_pages: Mapped[int] = mapped_column(default=0, server_default="0")
+    # "table": CSV/XLSX loaded into DuckDB. "document": PDF or image text stored as chunks (duckdb_path is empty).
     kind: Mapped[str] = mapped_column(String(16), default="table", server_default="table")
     duckdb_path: Mapped[str] = mapped_column(String(512))
     # Rows for a table, pages for a document.
@@ -51,7 +59,6 @@ class ChatSession(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    dataset_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(120))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

@@ -234,7 +234,10 @@ def build_pdf(question: str, answer: str, steps: list[dict], dataset_name: str, 
         story += [_paragraph(f"[{item['label']}] {item['text']}", SMALL) for item in samples["items"]]
     if sources and sources.get("items"):
         story.append(_paragraph("Sumber di dokumen", HEADING))
-        story += [_paragraph(f"Hal. {item['page']}: {item['text']}", SMALL) for item in sources["items"]]
+        story += [
+            _paragraph(f"{item['file'] + ', ' if item.get('file') else ''}hal. {item['page']}: {item['text']}", SMALL)
+            for item in sources["items"]
+        ]
     if note or code:
         story.append(_paragraph("Cara perhitungan", HEADING))
         if note:

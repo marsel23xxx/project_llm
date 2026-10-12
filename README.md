@@ -1,8 +1,8 @@
 # Agentic Data Analyst
 
-Asisten analisis data berbasis AI agent. User mengunggah CSV/Excel atau PDF, lalu bertanya dalam Bahasa Indonesia; agent menulis SQL/Python, menjalankannya dengan aman, dan menjawab dengan tabel, grafik, dan insight.
+Asisten analisis data berbasis AI agent. User membuka chat, melampirkan CSV/Excel, PDF, atau foto dokumen (bisa beberapa file per chat), lalu bertanya dalam Bahasa Indonesia; agent menulis SQL/Python, menjalankannya dengan aman, dan menjawab dengan tabel, grafik, dan insight.
 
-> Status: agent LangGraph untuk data tabel (SQL, Python sandbox, sentimen IndoBERT, forecasting LSTM, ringkasan dataset) dan dokumen PDF (tanya-jawab dengan sumber halaman), laporan PDF, live di VPS. Berikutnya: CI/CD dan monitoring.
+> Status: agent LangGraph dalam sesi chat dengan banyak lampiran: data tabel (SQL, Python sandbox, sentimen IndoBERT, forecasting LSTM), dokumen PDF, dan gambar/PDF hasil scan lewat OCR. Laporan PDF, LLM lokal atau API (DeepSeek/Claude), live di VPS. Berikutnya: CI/CD dan monitoring.
 
 ## Cara kerja agent
 
@@ -23,6 +23,16 @@ pertanyaan ─► route ─┬─ sql ───────► generate_sql ─�
 - **Laporan PDF**: setiap jawaban bisa diunduh sebagai PDF (pertanyaan, jawaban, grafik, tabel, cara perhitungan) yang dibuat server dari langkah agent yang tersimpan, bukan oleh LLM. Permintaan seperti "buatkan dalam PDF" dijawab normal lalu diarahkan ke tombol ini.
 - **Ringkasan dataset**: pertanyaan "ringkas isi data ini" dijawab dari profil kolom tanpa LLM.
 - **Streaming**: setiap langkah agent (intent, kode, tabel, grafik, jawaban) dikirim lewat SSE dan disimpan agar riwayat chat tampil sama persis.
+
+## Sesi chat dan lampiran
+
+Satu chat bisa dipakai tanpa file, dan bisa dilampiri sampai 10 file kapan saja (tombol lampiran, atau tempel gambar dari clipboard).
+
+- **Dokumen dan gambar** di satu chat dibaca sebagai satu kumpulan; jawaban menyebut nama file dan halamannya.
+- **OCR** (Tesseract, model Indonesia + Inggris, berjalan di server): gambar PNG/JPG/WEBP dan halaman PDF yang tidak punya teks dibaca dengan OCR; halaman PDF yang punya teks asli tidak. Batas 30 halaman OCR per PDF. Scan bersih terbaca baik (sekitar 0,5 detik per halaman); foto miring atau buram dan tulisan tangan mulai salah baca.
+- **Tabel**: jika satu chat berisi beberapa tabel, yang dianalisis adalah yang terakhir dilampirkan. Menggabungkan beberapa tabel belum didukung.
+- **Chat berisi tabel dan dokumen**: kata di pertanyaan menentukan tujuannya ("dokumen", "halaman", "kontrak", "gambar" mengarah ke dokumen; selain itu ke tabel).
+- Menghapus satu file tidak menghapus percakapannya; menghapus chat menghapus semua file dan pesannya.
 
 ## Dokumen PDF (RAG)
 
@@ -103,7 +113,10 @@ backend/                FastAPI
   app/services/data/    ingest CSV/XLSX ke DuckDB, profiling, cleanup 24 jam
   app/services/llm/     provider lokal (llama.cpp), OpenAI-compatible (DeepSeek), Claude; router hybrid
   app/services/agent/   graph LangGraph, guardrail, eksekutor DuckDB, klien sandbox, pemilih grafik, sentimen
-  app/services/documents.py   ekstraksi PDF, pemecahan teks, pencarian kutipan
+  app/services/documents.py   ekstraksi PDF/gambar, pemecahan teks, pencarian kutipan
+  app/services/ocr.py         OCR Tesseract untuk gambar dan halaman scan
+  app/services/uploads.py     penyimpanan file yang dilampirkan
+  app/db/migrate.py           migrasi skema ringan saat startup
   app/services/report.py      pembuat laporan PDF
   app/ml/               normalisasi teks Indonesia + pemuat model
   models/               model terlatih (intent, sentimen)
@@ -165,11 +178,11 @@ Gunakan `local` selama development. API key baru diisi saat siap live demo; kedu
 | POST | `/api/v1/auth/refresh` | Perpanjang sesi |
 | POST | `/api/v1/auth/logout` | Keluar |
 | GET | `/api/v1/auth/me` | Data user yang login |
-| POST | `/api/v1/datasets` | Upload CSV/XLSX/PDF (maks 50 MB) |
-| GET | `/api/v1/datasets` | Daftar dataset milik user |
 | GET | `/api/v1/datasets/{id}/profile` | Statistik kolom + sampel baris |
-| DELETE | `/api/v1/datasets/{id}` | Hapus dataset beserta percakapannya |
-| POST | `/api/v1/chat/sessions` | Buat sesi chat untuk satu dataset |
+| DELETE | `/api/v1/datasets/{id}` | Hapus satu file dari chat |
+| POST | `/api/v1/chat/sessions` | Buat chat kosong |
+| POST | `/api/v1/chat/sessions/{id}/files` | Lampirkan CSV/XLSX/PDF/gambar ke chat (maks 50 MB) |
+| DELETE | `/api/v1/chat/sessions/{id}` | Hapus chat beserta file dan pesannya |
 | GET | `/api/v1/chat/sessions` | Daftar sesi |
 | GET | `/api/v1/chat/sessions/{id}` | Riwayat pesan beserta langkah agent |
 | POST | `/api/v1/chat/sessions/{id}/messages` | Kirim pertanyaan, jawaban di-stream (SSE); kuota harian per user |

@@ -11,13 +11,19 @@ from pathlib import Path
 
 import numpy as np
 import pdfplumber
+from PIL import Image, UnidentifiedImageError
 from scipy.sparse import hstack
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from app.ml.text import normalize
+from app.services import ocr
 
 MAX_PAGES = 300
-MIN_CHARS_PER_PAGE = 30  # below this on average, the PDF is almost certainly scanned images
+MIN_CHARS_PER_PAGE = 30  # a page with less text than this is treated as a scanned image
+# OCR takes a few seconds per page on CPU and uploads are processed while the user waits.
+MAX_OCR_PAGES = 30
+OCR_DPI = 200
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 # A CPU-only LLM reads roughly 15-20 prompt tokens per second, so prompt size is the latency:
 # small chunks and few of them keep a document answer under a minute.
 CHUNK_WORDS = 110
@@ -39,14 +45,35 @@ class Chunk:
     page: int
     position: int
     text: str
+    source: str = ""  # file name, when a session holds several documents
 
 
-def extract_pages(path: Path) -> list[str]:
+@dataclass
+class Extraction:
+    pages: list[str]
+    ocr_pages: int = 0  # how many pages were read by OCR instead of from embedded text
+
+
+def extract_pages(path: Path) -> Extraction:
+    """Text of each PDF page. Pages without embedded text (scans) are read with OCR."""
+    ocr_pages = 0
     try:
         with pdfplumber.open(path) as pdf:
             if len(pdf.pages) > MAX_PAGES:
                 raise DocumentError(f"PDF memiliki {len(pdf.pages)} halaman; batasnya {MAX_PAGES} halaman.")
-            pages = [(page.extract_text() or "").strip() for page in pdf.pages]
+            pages = []
+            for page in pdf.pages:
+                text = (page.extract_text() or "").strip()
+                if len(text) < MIN_CHARS_PER_PAGE and ocr.available():
+                    if ocr_pages >= MAX_OCR_PAGES:
+                        raise DocumentError(
+                            f"PDF ini berisi lebih dari {MAX_OCR_PAGES} halaman hasil scan. "
+                            f"Pecah menjadi file yang lebih kecil agar bisa dibaca dengan OCR."
+                        )
+                    scanned = ocr.read_text(page.to_image(resolution=OCR_DPI).original)
+                    if len(scanned) > len(text):
+                        text, ocr_pages = scanned, ocr_pages + 1
+                pages.append(text)
     except DocumentError:
         raise
     except Exception as exc:  # pdfminer raises many parser-specific errors
@@ -55,14 +82,32 @@ def extract_pages(path: Path) -> list[str]:
     if not pages:
         raise DocumentError("PDF tidak memiliki halaman.")
     if sum(len(p) for p in pages) < MIN_CHARS_PER_PAGE * len(pages):
+        if not ocr.available():
+            raise DocumentError("PDF ini hasil scan dan mesin OCR tidak tersedia di server, sehingga teksnya tidak bisa dibaca.")
         raise DocumentError(
-            "PDF ini tampaknya hasil scan atau foto, sehingga teksnya tidak bisa dibaca. "
-            "Saat ini hanya PDF berisi teks asli (bisa diblok dan disalin) yang didukung."
+            "Teks di PDF hasil scan ini tidak terbaca oleh OCR. Coba scan ulang dengan resolusi lebih tinggi dan posisi lurus."
         )
-    return pages
+    return Extraction(pages, ocr_pages)
 
 
-def chunk_pages(pages: list[str]) -> list[Chunk]:
+def extract_image(path: Path) -> Extraction:
+    """Text of a photo or screenshot, read with OCR, as a one-page document."""
+    try:
+        with Image.open(path) as image:
+            image.load()
+            text = ocr.read_text(image)
+    except ocr.OcrUnavailable as exc:
+        raise DocumentError(str(exc)) from exc
+    except (UnidentifiedImageError, OSError) as exc:
+        raise DocumentError("File gambar tidak bisa dibuka. Gunakan PNG, JPG, atau WEBP.") from exc
+    if len(text) < MIN_CHARS_PER_PAGE:
+        raise DocumentError(
+            "Tidak ada teks yang terbaca dari gambar ini. OCR bekerja baik untuk foto dokumen yang lurus, terang, dan tajam."
+        )
+    return Extraction([text], ocr_pages=1)
+
+
+def chunk_pages(pages: list[str], source: str = "") -> list[Chunk]:
     """Split each page into overlapping word windows; a chunk never spans pages so it can cite one."""
     chunks: list[Chunk] = []
     for page_number, text in enumerate(pages, start=1):
@@ -75,7 +120,7 @@ def chunk_pages(pages: list[str]) -> list[Chunk]:
             # A short tail is already covered by the previous window's overlap.
             if start > 0 and len(window) <= OVERLAP_WORDS:
                 break
-            chunks.append(Chunk(page=page_number, position=len(chunks), text=" ".join(window)))
+            chunks.append(Chunk(page=page_number, position=len(chunks), text=" ".join(window), source=source))
     return chunks
 
 
@@ -108,19 +153,29 @@ def summary_excerpts(chunks: list[Chunk], limit: int = SUMMARY_EXCERPTS) -> tupl
         return chunks, False
     step = (len(chunks) - 1) / (limit - 1)
     picked = [chunks[round(i * step)] for i in range(limit)]
-    return [Chunk(c.page, c.position, " ".join(c.text.split()[:SUMMARY_EXCERPT_WORDS])) for c in picked], True
+    return [Chunk(c.page, c.position, " ".join(c.text.split()[:SUMMARY_EXCERPT_WORDS]), c.source) for c in picked], True
 
 
-def page_texts(chunks: list[Chunk]) -> list[tuple[int, str]]:
-    """Rebuild each page's text from its chunks, dropping the words repeated by the overlap."""
-    pages: dict[int, list[str]] = {}
+def page_texts(chunks: list[Chunk]) -> list[tuple[str, int, str]]:
+    """Rebuild each page's text as (file, page, text), dropping the words repeated by the overlap."""
+    pages: dict[tuple[str, int], list[str]] = {}
     for chunk in sorted(chunks, key=lambda c: c.position):
         words = chunk.text.split()
-        if chunk.page in pages:
+        key = (chunk.source, chunk.page)
+        if key in pages:
             words = words[OVERLAP_WORDS:]
-        pages.setdefault(chunk.page, []).extend(words)
-    return [(page, " ".join(words)) for page, words in pages.items()]
+        pages.setdefault(key, []).extend(words)
+    return [(source, page, " ".join(words)) for (source, page), words in pages.items()]
 
 
 def word_count(chunks: list[Chunk]) -> int:
-    return sum(len(text.split()) for _, text in page_texts(chunks))
+    return sum(len(text.split()) for _, _, text in page_texts(chunks))
+
+
+def renumber(groups: list[list[Chunk]]) -> list[Chunk]:
+    """Join the chunks of several files into one corpus with a single running position."""
+    merged: list[Chunk] = []
+    for group in groups:
+        for chunk in sorted(group, key=lambda c: c.position):
+            merged.append(Chunk(chunk.page, len(merged), chunk.text, chunk.source))
+    return merged

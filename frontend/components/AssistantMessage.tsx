@@ -38,6 +38,18 @@ function progressLabel(steps: AgentEvent[]): string {
   }
 }
 
+/** "halaman 3, 4" for one document; "nota.png hal. 1; sop.pdf hal. 3, 4" when several are attached. */
+function sourceSummary(items: { file?: string; page: number }[]): string {
+  const pages = new Map<string, number[]>();
+  for (const item of items) {
+    const list = pages.get(item.file ?? "") ?? [];
+    if (!list.includes(item.page)) list.push(item.page);
+    pages.set(item.file ?? "", list);
+  }
+  if (pages.size === 1) return `halaman ${[...pages.values()][0].join(", ")}`;
+  return [...pages].map(([file, list]) => `${file} hal. ${list.join(", ")}`).join("; ");
+}
+
 type Props = { steps: AgentEvent[]; pending: boolean; messageId?: string };
 
 export function AssistantMessage({ steps, pending, messageId }: Props) {
@@ -117,12 +129,14 @@ export function AssistantMessage({ steps, pending, messageId }: Props) {
       {sources && sources.items.length > 0 && (
         <details className="rounded-lg border border-border text-sm">
           <summary className="cursor-pointer px-3 py-2 text-muted">
-            Sumber: halaman {[...new Set(sources.items.map((s) => s.page))].join(", ")}
+            Sumber: {sourceSummary(sources.items)}
           </summary>
           <ul className="space-y-2 border-t border-border p-3">
             {sources.items.map((item, i) => (
               <li key={i} className="text-xs leading-relaxed">
-                <span className="mr-2 rounded-full border border-border px-2 py-0.5 text-muted">hal. {item.page}</span>
+                <span className="mr-2 rounded-full border border-border px-2 py-0.5 text-muted">
+                  {item.file ? `${item.file}, ` : ""}hal. {item.page}
+                </span>
                 {item.text}
               </li>
             ))}

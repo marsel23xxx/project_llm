@@ -27,6 +27,8 @@ dependencies = [
     "numpy>=2.0",
     "reportlab>=4.2",
     "pdfplumber>=0.11",
+    "pytesseract>=0.3.13",
+    "pillow>=10.4",
     "scipy>=1.13",
 ]
 
