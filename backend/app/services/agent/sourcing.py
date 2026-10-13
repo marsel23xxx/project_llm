@@ -40,9 +40,37 @@ def _number_forms(value: float) -> list[str]:
     return [text, text.replace(".", ",")]
 
 
-def number_in_text(value: float, text: str) -> bool:
-    """True when the number is written in the text, in either Indonesian or English digit grouping."""
-    return any(re.search(rf"(?<![\d.,]){re.escape(form)}(?![.,]?\d)", text) for form in _number_forms(value))
+_NUMBER = re.compile(r"\d+(?:[.,]\d+)*")
+
+
+def _numbers_in(text: str) -> set[float]:
+    """Every number written in the text, read both ways: "38.310,89" (Indonesian) and "38,310.89" (English)."""
+    found: set[float] = set()
+    for token in _NUMBER.findall(text):
+        for reading in (token.replace(".", "").replace(",", "."), token.replace(",", "")):
+            try:
+                found.add(float(reading))
+            except ValueError:
+                pass
+    return found
+
+
+def _decimals(value: float) -> int:
+    text = f"{value:.4f}".rstrip("0")
+    return len(text) - text.index(".") - 1
+
+
+def number_in_text(value: float, text: str, numbers: set[float] | None = None) -> bool:
+    """True when the number is written in the text, in either digit grouping, or is one of its numbers rounded.
+
+    Rounding counts because a chart of "38.311 ha" drawn from "38.310,89 ha" is still the source's figure.
+    """
+    if any(re.search(rf"(?<![\d.,]){re.escape(form)}(?![.,]?\d)", text) for form in _number_forms(value)):
+        return True
+    scale = 10 ** _decimals(value)
+    numbers = _numbers_in(text) if numbers is None else numbers
+    # Half-up, as people round; only a number with more digits than the value can be its origin.
+    return any(n != value and int(n * scale + 0.5) / scale == value and n * scale != int(n * scale) for n in numbers)
 
 
 def verify_chart_sources(markdown: str, source_text: str) -> tuple[str, int]:
@@ -51,6 +79,7 @@ def verify_chart_sources(markdown: str, source_text: str) -> tuple[str, int]:
     Returns the document and how many charts were relabelled.
     """
     relabelled = 0
+    numbers = _numbers_in(source_text)
 
     def check(match: re.Match) -> str:
         nonlocal relabelled
@@ -63,7 +92,7 @@ def verify_chart_sources(markdown: str, source_text: str) -> tuple[str, int]:
             return body  # malformed: the renderer drops it anyway
         if str(spec.get("source", "")).lower() not in _CLAIMS_SOURCE:
             return body
-        if source_text and all(number_in_text(v, source_text) for v in values):
+        if source_text and all(number_in_text(v, source_text, numbers) for v in values):
             return body
         relabelled += 1
         spec["source"] = "perkiraan"

@@ -233,9 +233,9 @@ def render_docx(markdown: str) -> bytes:
 _BODY = ParagraphStyle("doc-body", fontName="Times-Roman", fontSize=12, leading=18, alignment=TA_JUSTIFY, spaceAfter=8)
 _TITLE = ParagraphStyle("doc-title", fontName="Times-Bold", fontSize=16, leading=21, alignment=TA_CENTER, spaceAfter=20)
 _HEADINGS = {
-    1: ParagraphStyle("doc-h1", fontName="Times-Bold", fontSize=14, leading=19, spaceBefore=14, spaceAfter=8),
-    2: ParagraphStyle("doc-h2", fontName="Times-Bold", fontSize=12.5, leading=17, spaceBefore=10, spaceAfter=6),
-    3: ParagraphStyle("doc-h3", fontName="Times-BoldItalic", fontSize=12, leading=16, spaceBefore=8, spaceAfter=4),
+    1: ParagraphStyle("doc-h1", fontName="Times-Bold", fontSize=14, leading=19, spaceBefore=14, spaceAfter=8, keepWithNext=1),
+    2: ParagraphStyle("doc-h2", fontName="Times-Bold", fontSize=12.5, leading=17, spaceBefore=10, spaceAfter=6, keepWithNext=1),
+    3: ParagraphStyle("doc-h3", fontName="Times-BoldItalic", fontSize=12, leading=16, spaceBefore=8, spaceAfter=4, keepWithNext=1),
 }
 _LIST = ParagraphStyle("doc-list", parent=_BODY, alignment=TA_LEFT, leftIndent=20, bulletIndent=6, spaceAfter=4, bulletFontName="Times-Roman", bulletFontSize=12)
 _CELL = ParagraphStyle("doc-cell", fontName="Times-Roman", fontSize=10.5, leading=13)

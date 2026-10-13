@@ -71,8 +71,19 @@ def test_numbers_are_matched_in_both_digit_groupings():
     text = "Luas terbakar 1.161.192 hektare, naik 12,5 persen; 2,345 hotspots and 38 provinsi."
     for value in (1161192, 12.5, 2345, 38):
         assert sourcing.number_in_text(value, text), value
-    for value in (161, 12, 5, 1161, 2.3):  # parts of a longer number do not count
+    for value in (161, 12, 5, 1161, 2.4):  # parts of a longer number do not count
         assert not sourcing.number_in_text(value, text), value
+
+
+def test_a_rounded_source_number_still_counts_as_the_source():
+    # The chart of the first real test: drawn from a news table, rounded by the model, then wrongly called an estimate.
+    text = "Kalbar: 38.310,89 ha; Riau: 16.249,24; Kalsel: 8.019,62; Kalteng: 7.634,46; Sumsel: 1.926,23; Jambi: ± 658,29. Naik 12,5 persen."
+    for value in (38311, 16249, 8020, 7634, 1926, 658.29, 658.3, 13):
+        assert sourcing.number_in_text(value, text), value
+    for value in (38310, 38312, 8019, 12, 660):  # truncated or simply different: not the source's figure
+        assert not sourcing.number_in_text(value, text), value
+    chart = _chart("web", [38311, 16249])
+    assert sourcing.verify_chart_sources(chart, text)[1] == 0
 
 
 def _chart(source: str, values: list) -> str:
