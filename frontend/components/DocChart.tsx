@@ -15,6 +15,10 @@ export type DocChartSpec = {
 const COLORS = ["var(--series-1)", "var(--series-2)", "var(--series-3)", "var(--series-4)", "var(--series-5)", "var(--series-6)"];
 const KINDS: Record<string, DocChartSpec["kind"]> = { bar: "bar", batang: "bar", donut: "donut", donat: "donut", pie: "donut" };
 
+// Labels with an order of their own (years, dates, months, quarters, numbered steps) keep it. Mirrors the server.
+const SEQUENCE_LABEL =
+  /^\s*(?:\d[\d\s./-]*|(?:q|k|kuartal|triwulan|semester|tahap|fase|minggu|bulan|hari|tahun|periode|ke)[\s-]*\d+.*|(?:jan|feb|mar|apr|mei|may|jun|jul|agu|aug|sep|okt|oct|nov|des|dec)\w*.*|(?:senin|selasa|rabu|kamis|jumat|sabtu|minggu))\s*$/i;
+
 const format = (value: number) => value.toLocaleString("id-ID", { maximumFractionDigits: 2 });
 
 /** Same validation as the server: a malformed chart block is dropped, not guessed at. */
@@ -28,6 +32,10 @@ export function parseChart(raw: string): DocChartSpec | null {
     if (values.some((v: number) => !Number.isFinite(v) || v < 0) || values.reduce((a: number, b: number) => a + b, 0) <= 0) return null;
 
     let pairs = labels.map((label, i) => ({ label: String(label).slice(0, 40), value: values[i] as number }));
+    if (kind === "bar" && !pairs.every((p) => SEQUENCE_LABEL.test(p.label))) {
+      // Categories are compared by size, so the largest comes first.
+      pairs = [...pairs].sort((a, b) => b.value - a.value);
+    }
     if (kind === "donut" && pairs.length > COLORS.length) {
       pairs = [...pairs].sort((a, b) => b.value - a.value);
       const rest = pairs.slice(COLORS.length - 1).reduce((sum, p) => sum + p.value, 0);
@@ -59,6 +67,13 @@ export function DocChart({ spec }: { spec: DocChartSpec }) {
   const total = spec.values.reduce((a, b) => a + b, 0);
   const suffix = spec.unit ? ` ${spec.unit}` : "";
   const share = (value: number) => `${format(Math.round((1000 * value) / total) / 10)}%`;
+  // Stated from the numbers, so it cannot disagree with the chart the way a written paragraph can.
+  const ranked = [...data].sort((a, b) => b.value - a.value);
+  const amount = (value: number) => (spec.unit === "%" ? `${format(value)}%` : `${format(value)}${suffix}`);
+  const reading =
+    spec.kind === "donut"
+      ? `Bagian terbesar: ${ranked[0].label} (${share(ranked[0].value)}).`
+      : `Tertinggi: ${ranked[0].label} (${amount(ranked[0].value)}). Terendah: ${ranked[ranked.length - 1].label} (${amount(ranked[ranked.length - 1].value)}).`;
 
   return (
     <figure className="rounded-lg border border-border bg-[var(--chart-surface)] p-4">
@@ -132,7 +147,8 @@ export function DocChart({ spec }: { spec: DocChartSpec }) {
           </ul>
         </div>
       )}
-      <p className="mt-3 text-xs text-muted">
+      <p className="mt-3 text-sm">{reading}</p>
+      <p className="mt-1 text-xs text-muted">
         {spec.fromSource ? "Sumber: dokumen yang dilampirkan" : "Angka perkiraan, perlu diverifikasi"}
       </p>
     </figure>

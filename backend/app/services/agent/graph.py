@@ -74,6 +74,11 @@ def is_writing_request(text: str, has_table: bool) -> bool:
     return re.search(rf"\b{_WRITE_VERB}\b.*\b{nouns}\b", text) is not None
 
 
+# A request for things the model cannot know without a source: current events, or detailed figures.
+CURRENT_DATA_WORDING = re.compile(
+    r"\b(terkini|terbaru|sekarang|saat ini|hari ini|kemarin|minggu ini|bulan ini|tahun ini|baru-baru ini|viral|trending"
+    r"|aktual|update|data(nya)? (secara )?(rinci|terperinci|lengkap|detail)|statistik|angka resmi)\b"
+)
 DOCUMENT_WORDING = re.compile(
     r"\b(dokumen|pdf|gambar|foto|scan|halaman|surat|kontrak|perjanjian|sop|makalah|artikel|laporan|teks|tulisan|pasal|bab|lampiran)\b"
 )
@@ -350,6 +355,16 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
         answer = f'Dokumen "{title}" selesai ditulis (sekitar {exports.format_count(words)} kata).'
         if not hosted:
             answer += " Ini versi ringkas dari model lokal; untuk dokumen panjang dan lengkap, aktifkan API LLM."
+        estimated = sum(b.kind == "chart" and not b.chart.from_source for b in exports.parse_markdown(markdown))
+        wants_current = CURRENT_DATA_WORDING.search(normalize(state["question"])) is not None
+        if not passages and (wants_current or estimated):
+            # Said in the chat itself: a reader should not have to open the document to learn this.
+            answer += (
+                "\n\n**Perlu diketahui:** saya tidak punya akses ke berita atau data terbaru, dan tidak ada sumber "
+                "yang dilampirkan. Dokumen ini ditulis dari pengetahuan umum"
+                + (f", dan {estimated} grafik di dalamnya memakai angka perkiraan, bukan data resmi" if estimated else "")
+                + ". Untuk data yang nyata, lampirkan sumbernya (misalnya PDF laporan resmi) di chat ini lalu minta saya menulis ulang."
+            )
         answer += " Periksa kembali fakta, angka, dan rujukannya sebelum dipakai."
         return {
             "document": {"title": title, "markdown": markdown, "words": words},

@@ -20,6 +20,7 @@ from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
+from reportlab.pdfbase.pdfmetrics import stringWidth
 from reportlab.platypus import Image as PdfImage
 from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
@@ -257,6 +258,22 @@ def _page_number(canvas, doc) -> None:
     canvas.restoreState()
 
 
+def _column_widths(rows: list[list[str]], total: float) -> list[float]:
+    """Wider columns for longer text, so one wordy column does not make every row tall.
+
+    Each column first gets room for its longest word (a narrow column would break "Kesehatan" in two);
+    what is left is shared by the length of the text.
+    """
+    columns = range(len(rows[0]))
+    texts = [[plain(row[c]) for row in rows] for c in columns]
+    floor = [max(stringWidth(word, "Times-Bold", _CELL.fontSize) for text in texts[c] for word in text.split() or [""]) + 14 for c in columns]
+    weights = [min(max(len(text) for text in texts[c]), 60) + 1 for c in columns]
+    spare = total - sum(floor)
+    if spare < 0:  # words too long to honour: plain proportional split
+        return [total * w / sum(weights) for w in weights]
+    return [floor[c] + spare * weights[c] / sum(weights) for c in columns]
+
+
 def render_pdf(markdown: str) -> bytes:
     story = []
     first_heading = True
@@ -281,12 +298,13 @@ def render_pdf(markdown: str) -> bytes:
         elif block.kind == "code":
             story.append(Paragraph(escape(block.text).replace("\n", "<br/>"), ParagraphStyle("doc-code", fontName="Courier", fontSize=9.5, leading=12, spaceAfter=8)))
         elif block.kind == "table":
-            width = (A4[0] - 6 * cm) / len(block.rows[0])
             data = [
                 [Paragraph(f"<b>{_markup(v)}</b>" if r == 0 else _markup(v), _CELL) for v in row]
                 for r, row in enumerate(block.rows)
             ]
-            table = Table(data, colWidths=[width] * len(block.rows[0]), repeatRows=1)
+            # splitInRow: a row taller than the space left is cut across the page break. Without it the
+            # whole table jumps to the next page and leaves the rest of this one empty.
+            table = Table(data, colWidths=_column_widths(block.rows, A4[0] - 6 * cm), repeatRows=1, splitInRow=1)
             table.setStyle(
                 TableStyle(
                     [

@@ -250,3 +250,68 @@ async def test_compose_prompt_asks_for_tables_and_charts_with_honest_sources():
     system = llm.calls[0][0]
     assert "```chart" in system and '"donut" hanya untuk komposisi' in system
     assert 'Jangan menandai perkiraan sebagai "dokumen"' in system
+
+
+def test_bars_are_sorted_by_size_unless_the_labels_are_a_sequence():
+    sectors = chart_image.parse_spec(json.dumps({"type": "bar", "unit": "triliun rupiah", "labels": ["Kesehatan", "Penerbangan", "Pertanian", "Pariwisata", "Pemadaman"], "values": [8, 5, 12, 4, 6]}))
+    assert sectors.labels == ["Pertanian", "Kesehatan", "Pemadaman", "Penerbangan", "Pariwisata"] and sectors.values == [12, 8, 6, 5, 4]
+    assert sectors.reading == "Tertinggi: Pertanian (12 triliun rupiah). Terendah: Pariwisata (4 triliun rupiah)."
+
+    for labels in (["2015", "2019", "2023"], ["Jan", "Feb", "Mar"], ["Kuartal 1", "Kuartal 2", "Kuartal 3"], ["Tahap 1", "Tahap 2", "Tahap 3"]):
+        spec = chart_image.parse_spec(json.dumps({"type": "bar", "labels": labels, "values": [5, 9, 2]}))
+        assert spec.labels == labels and spec.values == [5, 9, 2], labels
+
+    donut = chart_image.parse_spec(json.dumps({"type": "donut", "unit": "%", "labels": ["Gas", "Batu bara", "Lainnya"], "values": [18, 60, 22]}))
+    assert donut.reading == "Bagian terbesar: Batu bara (60%)."
+
+
+def _paper_with_chart(source: str) -> str:
+    return PAPER + '\n```chart\n{"type": "bar", "source": "%s", "labels": ["A", "B"], "values": [3, 1]}\n```\n' % source
+
+
+class FixedWriter(Writer):
+    def __init__(self, text: str):
+        super().__init__(hosted=True)
+        self.text = text
+
+    async def complete(self, kind, system, messages, max_tokens=4096):
+        self.calls.append((system, messages[-1]["content"], max_tokens))
+        return LLMResult(self.text, "fake", "fake", 10, 500)
+
+
+async def _compose(llm, question: str, **extra) -> str:
+    agent = build_agent(llm, Settings())
+    state = {"question": question, "context": "", "db_path": "", "usage": [], **extra}
+    return [e async for e, _ in stream_agent(agent, state)][-1]["text"]
+
+
+async def test_chat_says_when_current_data_was_asked_for_but_is_not_available():
+    answer = await _compose(FixedWriter(PAPER), "buatkan makalah kasus karhutla yang sekarang sedang viral, berikan datanya secara terperinci")
+    assert "tidak punya akses ke berita atau data terbaru" in answer and "lampirkan sumbernya" in answer
+
+    estimated = await _compose(FixedWriter(_paper_with_chart("perkiraan")), "buatkan makalah tentang energi terbarukan")
+    assert "1 grafik di dalamnya memakai angka perkiraan" in estimated
+
+    plain = await _compose(FixedWriter(PAPER), "buatkan makalah tentang energi terbarukan")
+    assert "Perlu diketahui" not in plain  # nothing estimated and nothing current asked for: no warning
+
+
+async def test_no_warning_when_the_document_is_written_from_attached_sources():
+    chunks = [{"page": 1, "position": 0, "text": "Luas karhutla 2023 tercatat 1,16 juta hektare.", "source": "laporan.pdf"}]
+    answer = await _compose(FixedWriter(_paper_with_chart("dokumen")), "buatkan makalah karhutla terbaru dari laporan ini", doc_chunks=chunks)
+    assert "Perlu diketahui" not in answer
+
+
+def test_pdf_table_with_a_tall_row_starts_on_the_page_where_it_is_introduced():
+    filler = "Kebakaran hutan dan lahan berulang setiap musim kemarau di Indonesia. " * 30
+    wordy = "Gagal panen akibat lahan terbakar dan kabut asap yang menutupi sinar matahari selama berminggu-minggu. " * 9
+    markdown = (
+        f"# Judul\n\n{filler}\n\nTabel berikut merangkum kerugian.\n\n"
+        f"| Sektor | Dampak | Kerugian |\n|---|---|---|\n| Pertanian | {wordy} | 12 triliun |\n| Kesehatan | Lonjakan ISPA | 8 triliun |\n"
+    )
+    reader = PdfReader(io.BytesIO(exports.render_pdf(markdown)))
+    first = " ".join(reader.pages[0].extract_text().split())
+    # The first row alone is taller than the space left; it is cut at the page break rather than moved whole.
+    assert len(reader.pages) == 2
+    assert "Tabel berikut merangkum kerugian." in first and "Sektor" in first and "Pertanian" in first
+    assert "Kesehatan" in " ".join(reader.pages[1].extract_text().split())  # and the short first column keeps the word whole

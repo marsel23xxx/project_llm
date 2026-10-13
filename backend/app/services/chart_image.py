@@ -7,6 +7,7 @@ looks the same and never depends on the model's ability to draw.
 import io
 import json
 import math
+import re
 from dataclasses import dataclass
 
 from PIL import Image, ImageDraw, ImageFont
@@ -37,6 +38,39 @@ class ChartSpec:
     def caption(self) -> str:
         return "Sumber: dokumen yang dilampirkan" if self.from_source else ESTIMATE_NOTE
 
+    @property
+    def reading(self) -> str:
+        """What the chart shows, stated from the numbers themselves.
+
+        The model's own paragraph about a chart can misread it (it once ranked a smaller bar above
+        a larger one), so the figure carries a one-line reading that cannot disagree with the data.
+        """
+        pairs = sorted(zip(self.values, self.labels), reverse=True)
+        suffix = f" {self.unit}" if self.unit and self.unit != "%" else ""
+        if self.kind == "donut":
+            total = sum(self.values)
+            share = format_number(round(100 * pairs[0][0] / total, 1))
+            return f"Bagian terbesar: {pairs[0][1]} ({share}%)."
+        high, low = pairs[0], pairs[-1]
+        percent = "%" if self.unit == "%" else ""
+        return (
+            f"Tertinggi: {high[1]} ({format_number(high[0])}{percent}{suffix}). "
+            f"Terendah: {low[1]} ({format_number(low[0])}{percent}{suffix})."
+        )
+
+
+# Labels that already have an order of their own: years, dates, months, quarters, numbered steps.
+_SEQUENCE_LABEL = re.compile(
+    r"^\s*(?:\d[\d\s./-]*|(?:q|k|kuartal|triwulan|semester|tahap|fase|minggu|bulan|hari|tahun|periode|ke)[\s-]*\d+.*"
+    r"|(?:jan|feb|mar|apr|mei|may|jun|jul|agu|aug|sep|okt|oct|nov|des|dec)\w*.*"
+    r"|(?:senin|selasa|rabu|kamis|jumat|sabtu|minggu))\s*$",
+    re.IGNORECASE,
+)
+
+
+def is_sequence(labels: list[str]) -> bool:
+    return all(_SEQUENCE_LABEL.match(label) for label in labels)
+
 
 def parse_spec(raw: str) -> ChartSpec:
     """Validate a chart block written by the LLM. Anything malformed is rejected, not guessed at."""
@@ -61,6 +95,9 @@ def parse_spec(raw: str) -> ChartSpec:
         raise ChartError("nilai harus angka tidak negatif dan tidak semuanya nol")
 
     pairs = list(zip([str(label)[:40] for label in labels], numbers))
+    if kind == "bar" and not is_sequence([label for label, _ in pairs]):
+        # Categories are compared by size, so the largest comes first; time-like labels keep their order.
+        pairs.sort(key=lambda p: -p[1])
     if kind == "donut" and len(pairs) > MAX_SLICES:
         # More slices than distinguishable colours: keep the largest and fold the rest together.
         pairs.sort(key=lambda p: -p[1])
@@ -101,11 +138,12 @@ def _frame(spec: ChartSpec, body_height: int) -> tuple[Image.Image, ImageDraw.Im
     # 600 layout units across a 14 cm figure puts 13-unit labels at about 8.5 pt on the page.
     width = 600 * SCALE
     top = (58 if spec.title else 24) * SCALE
-    image = Image.new("RGB", (width, top + body_height + 46 * SCALE), SURFACE)
+    image = Image.new("RGB", (width, top + body_height + 64 * SCALE), SURFACE)
     draw = ImageDraw.Draw(image)
     if spec.title:
         draw.text((28 * SCALE, 20 * SCALE), _fit(draw, spec.title, _font(17), width - 56 * SCALE), fill=INK, font=_font(17))
-    draw.text((28 * SCALE, image.height - 30 * SCALE), spec.caption, fill=MUTED, font=_font(11))
+    draw.text((28 * SCALE, image.height - 50 * SCALE), _fit(draw, spec.reading, _font(12), width - 56 * SCALE), fill=INK, font=_font(12))
+    draw.text((28 * SCALE, image.height - 28 * SCALE), spec.caption, fill=MUTED, font=_font(11))
     return image, draw, top
 
 
