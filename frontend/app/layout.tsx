@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Agentic Data Analyst",
+  title: "AI By Marcell",
   description: "Tanya data Anda dalam Bahasa Indonesia",
 };
 

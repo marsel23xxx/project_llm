@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AssistantMessage } from "@/components/AssistantMessage";
+import { Logo } from "@/components/Logo";
 import {
   api,
   ApiError,
@@ -296,7 +297,10 @@ export default function Home() {
         className={`${menuOpen ? "flex" : "hidden"} fixed inset-y-0 left-0 z-30 w-72 max-w-[85vw] shrink-0 flex-col border-r border-border bg-surface md:static md:flex`}
       >
         <div className="p-4">
-          <h1 className="font-semibold">Agentic Data Analyst</h1>
+          <h1 className="flex items-center gap-2.5 font-semibold">
+            <Logo />
+            AI By Marcell
+          </h1>
           <button
             onClick={newChat}
             className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white"
@@ -353,7 +357,7 @@ export default function Home() {
             >
               <Icon d="M4 6h16M4 12h16M4 18h16" size={20} />
             </button>
-            <p className="min-w-0 truncate text-sm font-medium">{activeSession?.title ?? "Agentic Data Analyst"}</p>
+            <p className="min-w-0 truncate text-sm font-medium">{activeSession?.title ?? "AI By Marcell"}</p>
           </div>
           {(files.length > 0 || uploading) && (
             <ul className="mt-2 flex flex-wrap gap-2" aria-label="File di chat ini">
@@ -388,6 +392,9 @@ export default function Home() {
           <div className="mx-auto max-w-3xl space-y-6 px-4 py-8">
             {messages.length === 0 && (
               <div className="py-8 text-center sm:py-14">
+                <div className="mb-4 flex justify-center">
+                  <Logo size={56} />
+                </div>
                 <h2 className="text-xl font-semibold">
                   {files.length > 0 ? "File siap. Mau tanya apa?" : "Tanya data Anda dalam Bahasa Indonesia"}
                 </h2>

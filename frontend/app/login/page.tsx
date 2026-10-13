@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+import { Logo } from "@/components/Logo";
 import { api, ApiError } from "@/lib/api";
 
 export default function LoginPage() {
@@ -31,7 +32,8 @@ export default function LoginPage() {
   return (
     <main className="flex flex-1 items-center justify-center px-4 py-16">
       <form onSubmit={submit} className="w-full max-w-sm rounded-xl border border-border bg-surface p-8 shadow-sm">
-        <h1 className="text-xl font-semibold">Agentic Data Analyst</h1>
+        <Logo size={48} />
+        <h1 className="mt-4 text-xl font-semibold">AI By Marcell</h1>
         <p className="mt-1 text-sm text-muted">
           {mode === "login" ? "Masuk untuk mulai bertanya tentang data Anda." : "Buat akun baru."}
         </p>
