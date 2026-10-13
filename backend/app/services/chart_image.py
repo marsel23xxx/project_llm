@@ -139,15 +139,31 @@ def _fit(draw: ImageDraw.ImageDraw, text: str, font, max_width: int) -> str:
     return text + "…"
 
 
+def _wrap(text: str, font, max_width: int, max_lines: int = 2) -> list[str]:
+    """Break a title over up to two lines; only what still does not fit is cut with an ellipsis."""
+    draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    lines: list[str] = []
+    words = text.split()
+    while words and len(lines) < max_lines:
+        line = words.pop(0)
+        while words and _width(draw, f"{line} {words[0]}", font) <= max_width:
+            line += " " + words.pop(0)
+        lines.append(line)
+    if words:
+        lines[-1] = _fit(draw, f"{lines[-1]} {' '.join(words)}", font, max_width)
+    return [_fit(draw, line, font, max_width) for line in lines]
+
+
 def _frame(spec: ChartSpec, body_height: int) -> tuple[Image.Image, ImageDraw.ImageDraw, int]:
     """A white canvas with the title on top and the provenance caption at the bottom; returns the body's top y."""
     # 600 layout units across a 14 cm figure puts 13-unit labels at about 8.5 pt on the page.
     width = 600 * SCALE
-    top = (58 if spec.title else 24) * SCALE
+    title = _wrap(spec.title, _font(17), width - 56 * SCALE) if spec.title else []
+    top = (34 + 24 * len(title) if title else 24) * SCALE
     image = Image.new("RGB", (width, top + body_height + 64 * SCALE), SURFACE)
     draw = ImageDraw.Draw(image)
-    if spec.title:
-        draw.text((28 * SCALE, 20 * SCALE), _fit(draw, spec.title, _font(17), width - 56 * SCALE), fill=INK, font=_font(17))
+    for i, line in enumerate(title):
+        draw.text((28 * SCALE, (20 + 24 * i) * SCALE), line, fill=INK, font=_font(17))
     draw.text((28 * SCALE, image.height - 50 * SCALE), _fit(draw, spec.reading, _font(12), width - 56 * SCALE), fill=INK, font=_font(12))
     draw.text((28 * SCALE, image.height - 28 * SCALE), spec.caption, fill=MUTED, font=_font(11))
     return image, draw, top

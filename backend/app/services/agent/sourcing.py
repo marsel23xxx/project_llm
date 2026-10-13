@@ -14,7 +14,6 @@ from app.services.websearch import WebSource
 _CHART_BLOCK = re.compile(r"(```chart\s*\n.*?\n\s*```)", re.DOTALL)
 _CITATION = re.compile(r"\[(\d{1,2}(?:\s*[,;]\s*\d{1,2})*)\]")
 _REFERENCES_HEADING = re.compile(r"^#{1,3}\s*(daftar pustaka|referensi|rujukan|sumber)\s*$.*", re.IGNORECASE | re.MULTILINE | re.DOTALL)
-_CLAIMS_SOURCE = ("dokumen", "document", "file", "sumber", "web")
 MONTHS = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
 
 
@@ -60,7 +59,11 @@ def _decimals(value: float) -> int:
     return len(text) - text.index(".") - 1
 
 
-def number_in_text(value: float, text: str, numbers: set[float] | None = None) -> bool:
+# A chart in "juta ha" may be drawn from a source that says "202.004,30 ha": the same figure in another unit.
+_UNIT_SCALES = {"ribu": 1e3, "juta": 1e6, "miliar": 1e9, "milyar": 1e9, "triliun": 1e12}
+
+
+def number_in_text(value: float, text: str, numbers: set[float] | None = None, unit: str = "") -> bool:
     """True when the number is written in the text, in either digit grouping, or is one of its numbers rounded.
 
     Rounding counts because a chart of "38.311 ha" drawn from "38.310,89 ha" is still the source's figure.
@@ -69,36 +72,43 @@ def number_in_text(value: float, text: str, numbers: set[float] | None = None) -
         return True
     scale = 10 ** _decimals(value)
     numbers = _numbers_in(text) if numbers is None else numbers
+    factors = [1.0] + [factor for word, factor in _UNIT_SCALES.items() if word in unit.lower()]
     # Half-up, as people round; only a number with more digits than the value can be its origin.
-    return any(n != value and int(n * scale + 0.5) / scale == value and n * scale != int(n * scale) for n in numbers)
+    return any(
+        n / f != value and int(n / f * scale + 0.5) / scale == value and n / f * scale != int(n / f * scale)
+        for n in numbers
+        for f in factors
+    )
 
 
-def verify_chart_sources(markdown: str, source_text: str) -> tuple[str, int]:
-    """Relabel as an estimate every chart that claims a source but whose numbers are not in the sources.
+def verify_chart_sources(markdown: str, document_text: str, web_text: str = "") -> tuple[str, int]:
+    """Label every chart by where its numbers are really found, whatever the model called it.
 
-    Returns the document and how many charts were relabelled.
+    "dokumen" when all values are written in the attached files, "web" when they are in the search
+    results, otherwise "perkiraan". Returns the document and how many charts ended up as estimates.
     """
-    relabelled = 0
-    numbers = _numbers_in(source_text)
+    estimates = 0
+    texts = [("dokumen", document_text, _numbers_in(document_text)), ("web", web_text, _numbers_in(web_text))]
 
     def check(match: re.Match) -> str:
-        nonlocal relabelled
+        nonlocal estimates
         body = match.group(1)
         raw = body.strip().removeprefix("```chart").removesuffix("```").strip()
         try:
             spec = json.loads(raw)
             values = [float(v) for v in spec["values"]]
-        except (ValueError, TypeError, KeyError):
+            unit = str(spec.get("unit", ""))
+        except (ValueError, TypeError, KeyError, AttributeError):
             return body  # malformed: the renderer drops it anyway
-        if str(spec.get("source", "")).lower() not in _CLAIMS_SOURCE:
-            return body
-        if source_text and all(number_in_text(v, source_text, numbers) for v in values):
-            return body
-        relabelled += 1
-        spec["source"] = "perkiraan"
+        origin = next(
+            (name for name, text, numbers in texts if text and all(number_in_text(v, text, numbers, unit) for v in values)),
+            "perkiraan",
+        )
+        estimates += origin == "perkiraan"
+        spec["source"] = origin
         return "```chart\n" + json.dumps(spec, ensure_ascii=False) + "\n```"
 
-    return _CHART_BLOCK.sub(check, markdown), relabelled
+    return _CHART_BLOCK.sub(check, markdown), estimates
 
 
 def cite_sources(markdown: str, sources: list[WebSource], today: date) -> tuple[str, list[WebSource]]:

@@ -82,24 +82,39 @@ def test_a_rounded_source_number_still_counts_as_the_source():
         assert sourcing.number_in_text(value, text), value
     for value in (38310, 38312, 8019, 12, 660):  # truncated or simply different: not the source's figure
         assert not sourcing.number_in_text(value, text), value
-    chart = _chart("web", [38311, 16249])
-    assert sourcing.verify_chart_sources(chart, text)[1] == 0
+    chart = _chart("perkiraan", [38311, 16249])
+    assert sourcing.verify_chart_sources(chart, "", text)[1] == 0
 
 
 def _chart(source: str, values: list) -> str:
     return '```chart\n' + json.dumps({"type": "bar", "source": source, "labels": ["2022", "2023"], "values": values}) + '\n```'
 
 
-def test_a_chart_only_keeps_its_source_when_its_numbers_are_in_the_source():
-    text = "Luas karhutla 204.894 hektare pada 2022 dan 1.161.192 hektare pada 2023."
-    kept, changed = sourcing.verify_chart_sources("Isi.\n\n" + _chart("web", [204894, 1161192]), text)
-    assert changed == 0 and exports.parse_markdown(kept)[1].chart.origin == "web"
+def test_a_chart_is_labelled_by_where_its_numbers_are_found_not_by_what_the_model_says():
+    web = "Luas karhutla 204.894 hektare pada 2022 dan 1.161.192 hektare pada 2023."
+    kept, estimates = sourcing.verify_chart_sources("Isi.\n\n" + _chart("web", [204894, 1161192]), "", web)
+    assert estimates == 0 and exports.parse_markdown(kept)[1].chart.origin == "web"
 
-    made_up, changed = sourcing.verify_chart_sources("Isi.\n\n" + _chart("web", [204894, 900000]), text)
-    assert changed == 1 and exports.parse_markdown(made_up)[1].chart.origin == "estimate"
+    made_up, estimates = sourcing.verify_chart_sources("Isi.\n\n" + _chart("web", [204894, 900000]), "", web)
+    assert estimates == 1 and exports.parse_markdown(made_up)[1].chart.origin == "estimate"
 
-    estimate, changed = sourcing.verify_chart_sources(_chart("perkiraan", [1, 2]), text)
-    assert changed == 0 and "perkiraan" in estimate
+    # The model's own label is not trusted either way: a real chart it called an estimate, or gave no usable label.
+    for label in ("perkiraan", "BNPB", ""):
+        promoted, estimates = sourcing.verify_chart_sources(_chart(label, [204894, 1161192]), "", web)
+        assert estimates == 0 and exports.parse_markdown(promoted)[0].chart.origin == "web", label
+
+    attached, _ = sourcing.verify_chart_sources(_chart("web", [204894, 1161192]), web, "lain")
+    assert exports.parse_markdown(attached)[0].chart.origin == "document"
+
+
+def test_a_chart_in_millions_matches_a_source_written_in_units():
+    # From the second real test: "juta ha" bars drawn from figures the sources give in hectares.
+    web = "Pada 2015 sekitar 2,6 juta hektare, 1,6 juta pada 2019, 1,2 juta pada 2023; 2025 sebesar 26.703 hektare; Januari-Juli 2026 202.004,30 ha."
+    spec = {"type": "bar", "unit": "juta ha", "labels": ["2015", "2019", "2023", "2025", "2026"], "values": [2.6, 1.6, 1.2, 0.03, 0.2]}
+    block = "```chart\n" + json.dumps(spec) + "\n```"
+    assert sourcing.verify_chart_sources(block, "", web)[1] == 0
+    assert sourcing.verify_chart_sources(block.replace("juta ha", "ha"), "", web)[1] == 1  # without the unit, 0,03 is not in the source
+    assert sourcing.verify_chart_sources(block.replace("0.03", "0.05"), "", web)[1] == 1
 
 
 SOURCES = [

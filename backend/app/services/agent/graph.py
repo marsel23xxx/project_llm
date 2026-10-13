@@ -384,8 +384,9 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None, 
         out = await llm.complete("complex", system, [{"role": "user", "content": request}], 6000 if hosted else 520)
         markdown = strip_fence(out.text)
         # A chart may only claim a source when its numbers are really written there.
-        source_text = "\n".join([text for _, _, text in passages] + [s.text for s in web])
-        markdown, _ = sourcing.verify_chart_sources(markdown, source_text)
+        markdown, _ = sourcing.verify_chart_sources(
+            markdown, "\n".join(text for _, _, text in passages), "\n".join(s.text for s in web)
+        )
         cited: list[WebSource] = []
         if web:
             markdown, cited = sourcing.cite_sources(markdown, web, today)

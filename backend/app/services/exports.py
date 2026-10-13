@@ -258,6 +258,22 @@ def _page_number(canvas, doc) -> None:
     canvas.restoreState()
 
 
+class _DocTable(Table):
+    """A table that will not leave just a row or two stranded at the foot of a page.
+
+    With little room left it moves to the next page whole; with plenty of room it splits as usual,
+    so a page is never left half empty either.
+    """
+
+    MIN_ROWS, SMALL_GAP = 3, 5 * cm
+
+    def split(self, availWidth, availHeight):
+        parts = super().split(availWidth, availHeight)
+        if len(parts) == 2 and availHeight < self.SMALL_GAP and len(parts[0]._cellvalues) - 1 < min(self.MIN_ROWS, len(self._cellvalues) - 1):
+            return []
+        return parts
+
+
 def _column_widths(rows: list[list[str]], total: float) -> list[float]:
     """Wider columns for longer text, so one wordy column does not make every row tall.
 
@@ -304,7 +320,7 @@ def render_pdf(markdown: str) -> bytes:
             ]
             # splitInRow: a row taller than the space left is cut across the page break. Without it the
             # whole table jumps to the next page and leaves the rest of this one empty.
-            table = Table(data, colWidths=_column_widths(block.rows, A4[0] - 6 * cm), repeatRows=1, splitInRow=1)
+            table = _DocTable(data, colWidths=_column_widths(block.rows, A4[0] - 6 * cm), repeatRows=1, splitInRow=1)
             table.setStyle(
                 TableStyle(
                     [

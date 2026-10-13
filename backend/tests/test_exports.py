@@ -306,8 +306,8 @@ async def test_no_warning_when_the_document_is_written_from_attached_sources():
 
 
 def test_pdf_table_with_a_tall_row_starts_on_the_page_where_it_is_introduced():
-    filler = "Kebakaran hutan dan lahan berulang setiap musim kemarau di Indonesia. " * 30
-    wordy = "Gagal panen akibat lahan terbakar dan kabut asap yang menutupi sinar matahari selama berminggu-minggu. " * 9
+    filler = "Kebakaran hutan dan lahan berulang setiap musim kemarau di Indonesia. " * 14
+    wordy = "Gagal panen akibat lahan terbakar dan kabut asap yang menutupi sinar matahari selama berminggu-minggu. " * 30
     markdown = (
         f"# Judul\n\n{filler}\n\nTabel berikut merangkum kerugian.\n\n"
         f"| Sektor | Dampak | Kerugian |\n|---|---|---|\n| Pertanian | {wordy} | 12 triliun |\n| Kesehatan | Lonjakan ISPA | 8 triliun |\n"
@@ -318,3 +318,23 @@ def test_pdf_table_with_a_tall_row_starts_on_the_page_where_it_is_introduced():
     assert len(reader.pages) == 2
     assert "Tabel berikut merangkum kerugian." in first and "Sektor" in first and "Pertanian" in first
     assert "Kesehatan" in " ".join(reader.pages[1].extract_text().split())  # and the short first column keeps the word whole
+
+
+def test_a_long_chart_title_wraps_instead_of_being_cut():
+    long_title = "Indikasi Lahan Terbakar di 6 Provinsi Prioritas per 8 September 2026 (hektare)"
+    font = chart_image._font(17)
+    lines = chart_image._wrap(long_title, font, 544 * chart_image.SCALE)
+    assert len(lines) == 2 and " ".join(lines) == long_title
+    short = chart_image.parse_spec(json.dumps({"type": "bar", "title": "Pendek", "labels": ["A", "B"], "values": [1, 2]}))
+    long = chart_image.parse_spec(json.dumps({"type": "bar", "title": long_title, "labels": ["A", "B"], "values": [1, 2]}))
+    assert chart_image.render_png(long)[1] > chart_image.render_png(short)[1]  # taller: room for the second line
+
+
+def test_pdf_table_does_not_leave_a_single_row_at_the_foot_of_a_page():
+    rows = "".join(f"| {year} | {n} ha | Catatan |\n" for year, n in [(2015, 26), (2019, 16), (2023, 12), (2025, 3), (2026, 20), (2027, 9)])
+    table = "| Tahun | Luas | Keterangan |\n|---|---|---|\n" + rows
+    for sentences in range(28, 42):  # sweep the table across the page break
+        filler = "Kebakaran hutan dan lahan berulang setiap musim kemarau di Indonesia. " * sentences
+        reader = PdfReader(io.BytesIO(exports.render_pdf(f"# Judul\n\n{filler}\n\n{table}")))
+        start = next(page.extract_text() for page in reader.pages if "Keterangan" in page.extract_text())
+        assert start.count("Catatan") >= 3, sentences  # the page where the table starts holds at least three of its rows
