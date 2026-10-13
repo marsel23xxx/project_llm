@@ -16,7 +16,7 @@ from docx.shared import Cm, Pt
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY
+from reportlab.lib.enums import TA_CENTER, TA_JUSTIFY, TA_LEFT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import cm
@@ -237,7 +237,7 @@ _HEADINGS = {
     2: ParagraphStyle("doc-h2", fontName="Times-Bold", fontSize=12.5, leading=17, spaceBefore=10, spaceAfter=6),
     3: ParagraphStyle("doc-h3", fontName="Times-BoldItalic", fontSize=12, leading=16, spaceBefore=8, spaceAfter=4),
 }
-_LIST = ParagraphStyle("doc-list", parent=_BODY, leftIndent=20, bulletIndent=6, spaceAfter=4, bulletFontName="Times-Roman", bulletFontSize=12)
+_LIST = ParagraphStyle("doc-list", parent=_BODY, alignment=TA_LEFT, leftIndent=20, bulletIndent=6, spaceAfter=4, bulletFontName="Times-Roman", bulletFontSize=12)
 _CELL = ParagraphStyle("doc-cell", fontName="Times-Roman", fontSize=10.5, leading=13)
 
 

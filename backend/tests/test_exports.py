@@ -129,6 +129,9 @@ def test_export_of_an_analysis_answer():
         ("buat laporan kegiatan bulan ini", False, True),
         ("buat laporan penjualan per bulan", True, False),  # with a table attached this is an analysis
         ("buatkan grafik untuk makalah saya", False, False),
+        # The request that was once answered as small talk because it mentions "grafik".
+        ("buatkan saya makalah untuk masalah kebakaran yang sedang viral di kahutla dan berikan data dan grafik yang bisa kamu berikan ke saya, kemudian generate ke word dan pdf", False, True),
+        ("buatkan makalah karhutla lengkap dengan tabel dan diagram", True, True),
         ("apa isi makalah ini", False, False),
         ("produk apa yang paling laku", True, False),
     ],
@@ -249,7 +252,7 @@ async def test_compose_prompt_asks_for_tables_and_charts_with_honest_sources():
     [e async for e, _ in stream_agent(agent, state)]
     system = llm.calls[0][0]
     assert "```chart" in system and '"donut" hanya untuk komposisi' in system
-    assert 'Jangan menandai perkiraan sebagai "dokumen"' in system
+    assert "angka yang tidak ditemukan di sumber otomatis dilabeli perkiraan" in system
 
 
 def test_bars_are_sorted_by_size_unless_the_labels_are_a_sequence():
@@ -287,7 +290,7 @@ async def _compose(llm, question: str, **extra) -> str:
 
 async def test_chat_says_when_current_data_was_asked_for_but_is_not_available():
     answer = await _compose(FixedWriter(PAPER), "buatkan makalah kasus karhutla yang sekarang sedang viral, berikan datanya secara terperinci")
-    assert "tidak punya akses ke berita atau data terbaru" in answer and "lampirkan sumbernya" in answer
+    assert "pencarian web belum diaktifkan" in answer and "tanpa berita atau data terbaru" in answer and "lampirkan sumbernya" in answer
 
     estimated = await _compose(FixedWriter(_paper_with_chart("perkiraan")), "buatkan makalah tentang energi terbarukan")
     assert "1 grafik di dalamnya memakai angka perkiraan" in estimated

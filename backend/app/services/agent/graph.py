@@ -21,6 +21,7 @@ import json
 import operator
 import re
 from collections.abc import AsyncIterator
+from datetime import date
 from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated, Literal, TypedDict
@@ -35,6 +36,8 @@ from app.services.agent.charts import suggest_chart
 from app.services.agent import forecast as forecasting
 from app.services.agent import profile as profiling
 from app.services import documents, exports
+from app.services.agent import sourcing
+from app.services.websearch import SearchError, WebSearch, WebSource
 from app.services.agent.executor import ExecutionError, QueryResult, run_sql
 from app.services.agent.guardrail import GuardrailError, validate_sql
 from app.services.agent.sandbox_client import run_python
@@ -68,6 +71,10 @@ _CHART_WORDS = re.compile(r"\b(grafik|chart|diagram|plot|tabel|hitung|jumlahkan|
 
 
 def is_writing_request(text: str, has_table: bool) -> bool:
+    # "buatkan makalah ... beserta data dan grafiknya" is still a paper, so a chart word after the
+    # noun does not matter. One before it does: "buatkan grafik untuk makalah saya" asks for a chart.
+    if re.search(rf"\b{_WRITE_VERB}\b(?:(?!{_CHART_WORDS.pattern}).)*?\b{_ALWAYS_PROSE}\b", text):
+        return True
     if _CHART_WORDS.search(text):
         return False
     nouns = _ALWAYS_PROSE if has_table else f"({_ALWAYS_PROSE}|{_PROSE_WITHOUT_TABLE})"
@@ -163,7 +170,7 @@ def _result_for_prompt(result: dict) -> str:
     return body
 
 
-def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
+def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None, search: WebSearch | None = None):
     max_attempts = settings.agent_max_attempts
     intent_model = ml.intent if ml else None
     sentiment_model = ml.sentiment if ml else None
@@ -344,32 +351,79 @@ def build_agent(llm: LLMRouter, settings: Settings, ml: MLModels | None = None):
                 limit = documents.SUMMARY_EXCERPTS_HOSTED if hosted else documents.SUMMARY_EXCERPTS
                 passages = [(c.source, c.page, c.text) for c in documents.summary_excerpts(chunks, limit)[0]]
 
+        # Web sources: always when nothing is attached, and with attachments only if current data is asked for.
+        today = date.today()
+        wants_current = CURRENT_DATA_WORDING.search(normalize(state["question"])) is not None
+        web: list[WebSource] = []
+        usage: list[dict] = []
+        search_failed = False
+        if search and hosted and (not passages or wants_current):
+            try:
+                asked = await llm.complete(
+                    "simple",
+                    prompts.SEARCH_QUERY_SYSTEM.format(today=sourcing.long_date(today)),
+                    [{"role": "user", "content": state["question"]}],
+                    150,
+                )
+                usage += _usage(asked, "search_queries")
+                queries = sourcing.parse_queries(asked.text, state["question"])
+            except LLMError:
+                queries = [state["question"][:200]]
+            try:
+                web = await search.search(queries)
+            except SearchError:
+                search_failed = True
+            usage.append({"step": "search", "provider": search.name, "queries": len(queries), "results": len(web)})
+
         system = prompts.COMPOSE_SYSTEM.format(
-            length=prompts.COMPOSE_LENGTH_HOSTED if hosted else prompts.COMPOSE_LENGTH_LOCAL
+            length=prompts.COMPOSE_LENGTH_HOSTED if hosted else prompts.COMPOSE_LENGTH_LOCAL,
+            sourcing=prompts.COMPOSE_SOURCING_WEB.format(today=sourcing.long_date(today)) if web else prompts.COMPOSE_SOURCING_NONE,
         )
-        request = prompts.document_request(state["question"], passages, state.get("history", ""))
+        request = prompts.document_request(state["question"], passages, state.get("history", ""), prompts.web_sources_block(web))
         # A CPU model writes about 7 tokens per second, so it can only draft a short version in time.
         out = await llm.complete("complex", system, [{"role": "user", "content": request}], 6000 if hosted else 520)
         markdown = strip_fence(out.text)
+        # A chart may only claim a source when its numbers are really written there.
+        source_text = "\n".join([text for _, _, text in passages] + [s.text for s in web])
+        markdown, _ = sourcing.verify_chart_sources(markdown, source_text)
+        cited: list[WebSource] = []
+        if web:
+            markdown, cited = sourcing.cite_sources(markdown, web, today)
+
         title, words = exports.document_title(markdown), exports.word_count(markdown)
         answer = f'Dokumen "{title}" selesai ditulis (sekitar {exports.format_count(words)} kata).'
         if not hosted:
             answer += " Ini versi ringkas dari model lokal; untuk dokumen panjang dan lengkap, aktifkan API LLM."
         estimated = sum(b.kind == "chart" and not b.chart.from_source for b in exports.parse_markdown(markdown))
-        wants_current = CURRENT_DATA_WORDING.search(normalize(state["question"])) is not None
-        if not passages and (wants_current or estimated):
-            # Said in the chat itself: a reader should not have to open the document to learn this.
+        guessed = f"{estimated} grafik di dalamnya memakai angka perkiraan, bukan angka dari sumber" if estimated else ""
+        # Said in the chat itself: a reader should not have to open the document to learn this.
+        if cited:
+            links = "\n".join(f"{i}. [{s.title.replace('[', '(').replace(']', ')')}]({s.url})" for i, s in enumerate(cited, start=1))
+            answer += f"\n\nDitulis dari {len(cited)} sumber web yang dirujuk di dalam dokumen:\n\n{links}"
+            if guessed:
+                answer += f"\n\n**Perlu diketahui:** {guessed}."
+        elif web:
             answer += (
-                "\n\n**Perlu diketahui:** saya tidak punya akses ke berita atau data terbaru, dan tidak ada sumber "
-                "yang dilampirkan. Dokumen ini ditulis dari pengetahuan umum"
-                + (f", dan {estimated} grafik di dalamnya memakai angka perkiraan, bukan data resmi" if estimated else "")
+                f"\n\n**Perlu diketahui:** pencarian web menemukan {len(web)} halaman, tetapi tidak ada yang dirujuk di dalam "
+                "dokumen, sehingga isinya berasal dari pengetahuan umum model" + (f"; {guessed}" if guessed else "") + "."
+            )
+        elif not passages and (wants_current or estimated):
+            if search_failed:
+                why = "pencarian web sedang gagal dihubungi"
+            elif search and hosted:
+                why = "pencarian web tidak menemukan halaman yang relevan"
+            else:
+                why = "pencarian web belum diaktifkan di server ini"
+            answer += (
+                f"\n\n**Perlu diketahui:** {why}, dan tidak ada sumber yang dilampirkan. Dokumen ini ditulis dari "
+                "pengetahuan umum, tanpa berita atau data terbaru" + (f"; {guessed}" if guessed else "")
                 + ". Untuk data yang nyata, lampirkan sumbernya (misalnya PDF laporan resmi) di chat ini lalu minta saya menulis ulang."
             )
-        answer += " Periksa kembali fakta, angka, dan rujukannya sebelum dipakai."
+        answer += "\n\nPeriksa kembali fakta, angka, dan rujukannya sebelum dipakai."
         return {
             "document": {"title": title, "markdown": markdown, "words": words},
             "answer": answer,
-            "usage": _usage(out, "compose"),
+            "usage": usage + _usage(out, "compose"),
         }
 
     async def describe_dataset(state: AgentState) -> dict:

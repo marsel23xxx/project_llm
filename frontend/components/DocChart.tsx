@@ -6,7 +6,7 @@ export type DocChartSpec = {
   kind: "bar" | "donut";
   title: string;
   unit: string;
-  fromSource: boolean;
+  origin: "document" | "web" | "estimate";
   labels: string[];
   values: number[];
 };
@@ -18,6 +18,13 @@ const KINDS: Record<string, DocChartSpec["kind"]> = { bar: "bar", batang: "bar",
 // Labels with an order of their own (years, dates, months, quarters, numbered steps) keep it. Mirrors the server.
 const SEQUENCE_LABEL =
   /^\s*(?:\d[\d\s./-]*|(?:q|k|kuartal|triwulan|semester|tahap|fase|minggu|bulan|hari|tahun|periode|ke)[\s-]*\d+.*|(?:jan|feb|mar|apr|mei|may|jun|jul|agu|aug|sep|okt|oct|nov|des|dec)\w*.*|(?:senin|selasa|rabu|kamis|jumat|sabtu|minggu))\s*$/i;
+
+const ORIGINS: Record<string, DocChartSpec["origin"]> = { dokumen: "document", document: "document", file: "document", sumber: "document", web: "web" };
+const CAPTIONS: Record<DocChartSpec["origin"], string> = {
+  document: "Sumber: dokumen yang dilampirkan",
+  web: "Sumber: hasil pencarian web, lihat Daftar Pustaka",
+  estimate: "Angka perkiraan, perlu diverifikasi",
+};
 
 const format = (value: number) => value.toLocaleString("id-ID", { maximumFractionDigits: 2 });
 
@@ -45,7 +52,7 @@ export function parseChart(raw: string): DocChartSpec | null {
       kind,
       title: String(data.title ?? "").slice(0, 120),
       unit: String(data.unit ?? "").slice(0, 20),
-      fromSource: ["dokumen", "document", "file", "sumber"].includes(String(data.source ?? "").toLowerCase()),
+      origin: ORIGINS[String(data.source ?? "").toLowerCase()] ?? "estimate",
       labels: pairs.map((p) => p.label),
       values: pairs.map((p) => p.value),
     };
@@ -149,7 +156,7 @@ export function DocChart({ spec }: { spec: DocChartSpec }) {
       )}
       <p className="mt-3 text-sm">{reading}</p>
       <p className="mt-1 text-xs text-muted">
-        {spec.fromSource ? "Sumber: dokumen yang dilampirkan" : "Angka perkiraan, perlu diverifikasi"}
+        {CAPTIONS[spec.origin]}
       </p>
     </figure>
   );

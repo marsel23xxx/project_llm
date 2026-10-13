@@ -17,6 +17,7 @@ from app.ml.models import load_models
 from app.services.agent.graph import build_agent
 from app.services.data.cleanup import cleanup_loop
 from app.services.llm.router import LLMRouter
+from app.services.websearch import search_from
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -32,7 +33,7 @@ async def lifespan(app: FastAPI):
     app.state.redis = Redis.from_url(settings.redis_url, decode_responses=True)
     app.state.llm = LLMRouter(settings)
     app.state.ml = await asyncio.to_thread(load_models, Path(settings.models_dir))
-    app.state.agent = build_agent(app.state.llm, settings, app.state.ml)
+    app.state.agent = build_agent(app.state.llm, settings, app.state.ml, search_from(settings))
     cleanup_task = asyncio.create_task(cleanup_loop())
     yield
     cleanup_task.cancel()

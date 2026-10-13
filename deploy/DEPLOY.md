@@ -180,6 +180,19 @@ curl -s localhost:8000/api/v1/health    # "hosted_model":"deepseek-flash"
 Jika baris `REMOTE_LLM_API_KEY` belum ada di `.env` (file dibuat sebelum fitur ini), tambahkan dengan
 `echo 'REMOTE_LLM_API_KEY=sk-...' >> .env`.
 
+### Pencarian web untuk makalah (opsional, gratis)
+
+Daftar di <https://app.tavily.com> (tanpa kartu), salin API key-nya (berawalan `tvly-`), lalu di server:
+
+```bash
+cd /opt/agentic-data-analyst
+echo 'TAVILY_API_KEY=tvly-...' >> .env     # ganti dengan key asli; jangan ditempel di chat atau di-commit
+docker compose up -d backend
+```
+
+Paket gratis memberi sekitar 1.000 pencarian per bulan; satu dokumen memakai paling banyak 3.
+Tanpa key, fitur menulis tetap jalan tetapi tanpa sumber web.
+
 Claude: isi `ANTHROPIC_API_KEY` dan `CLAUDE_MODEL`, mode yang sama. Pasang spend limit di Claude Console.
 
 Kembali ke gratis kapan saja: `LLM_MODE=local`, lalu `docker compose up -d backend`.

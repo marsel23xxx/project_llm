@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     # false = images never leave the server; such images then keep their OCR text, however poor.
     vision_fallback: bool = True
     vision_model: str = "deepseek-flash"
+    # Web search for written documents (Tavily; the free plan covers about 1,000 searches a month).
+    # Empty key = no search: documents are then written from the model's general knowledge only.
+    tavily_api_key: str | None = None
+    web_search: bool = True
+    web_search_max_sources: int = 8
     anthropic_api_key: str | None = None
     claude_model: str = "claude-opus-5-5"
     # Kosongkan (CLAUDE_EFFORT=) untuk model yang tidak mendukung effort, mis. Haiku 4.5
@@ -72,7 +77,7 @@ class Settings(BaseSettings):
     def is_production(self) -> bool:
         return self.environment == "production"
 
-    @field_validator("claude_effort", "anthropic_api_key", "remote_llm_api_key", "intent_min_confidence", mode="before")
+    @field_validator("claude_effort", "anthropic_api_key", "remote_llm_api_key", "tavily_api_key", "intent_min_confidence", mode="before")
     @classmethod
     def _empty_as_none(cls, value):
         return value or None

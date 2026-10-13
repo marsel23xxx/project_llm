@@ -19,6 +19,8 @@ MAX_BARS = 12
 MAX_SLICES = len(PALETTE)
 SCALE = 2  # drawn at twice the layout size so text stays sharp when printed
 ESTIMATE_NOTE = "Angka perkiraan, perlu diverifikasi"
+WEB_NOTE = "Sumber: hasil pencarian web, lihat Daftar Pustaka"
+_ORIGINS = {"dokumen": "document", "document": "document", "file": "document", "sumber": "document", "web": "web"}
 
 
 class ChartError(ValueError):
@@ -32,11 +34,15 @@ class ChartSpec:
     labels: list[str]
     values: list[float]
     unit: str = ""
-    from_source: bool = False  # True only when the numbers come from the user's attached files
+    origin: str = "estimate"  # "document" (the user's attached files), "web" (search results) or "estimate"
+
+    @property
+    def from_source(self) -> bool:
+        return self.origin != "estimate"
 
     @property
     def caption(self) -> str:
-        return "Sumber: dokumen yang dilampirkan" if self.from_source else ESTIMATE_NOTE
+        return {"document": "Sumber: dokumen yang dilampirkan", "web": WEB_NOTE}.get(self.origin, ESTIMATE_NOTE)
 
     @property
     def reading(self) -> str:
@@ -108,7 +114,7 @@ def parse_spec(raw: str) -> ChartSpec:
         labels=[label for label, _ in pairs],
         values=[value for _, value in pairs],
         unit=str(data.get("unit", "")).strip()[:20],
-        from_source=str(data.get("source", "")).lower() in ("dokumen", "document", "file", "sumber"),
+        origin=_ORIGINS.get(str(data.get("source", "")).lower(), "estimate"),
     )
 
 

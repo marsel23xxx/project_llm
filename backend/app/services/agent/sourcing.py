@@ -1,0 +1,103 @@
+"""Keep a written document honest about where its facts come from.
+
+The model writes the prose and cites sources as [n]; everything that can be checked is done here in
+code instead of being trusted: the reference list is built from the sources that were really cited,
+and a chart may only claim a source when its numbers are actually found in that source's text.
+"""
+
+import json
+import re
+from datetime import date
+
+from app.services.websearch import WebSource
+
+_CHART_BLOCK = re.compile(r"(```chart\s*\n.*?\n\s*```)", re.DOTALL)
+_CITATION = re.compile(r"\[(\d{1,2}(?:\s*[,;]\s*\d{1,2})*)\]")
+_REFERENCES_HEADING = re.compile(r"^#{1,3}\s*(daftar pustaka|referensi|rujukan|sumber)\s*$.*", re.IGNORECASE | re.MULTILINE | re.DOTALL)
+_CLAIMS_SOURCE = ("dokumen", "document", "file", "sumber", "web")
+MONTHS = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
+
+
+def long_date(day: date) -> str:
+    return f"{day.day} {MONTHS[day.month - 1]} {day.year}"
+
+
+def parse_queries(text: str, fallback: str, limit: int = 3) -> list[str]:
+    """Search queries, one per line, as written by the model; the user's own words if it wrote none."""
+    queries = []
+    for line in text.splitlines():
+        line = re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", line).strip().strip("\"'`")
+        if 3 <= len(line) <= 200 and line.lower() not in (q.lower() for q in queries):
+            queries.append(line)
+    return queries[:limit] or [fallback[:200]]
+
+
+def _number_forms(value: float) -> list[str]:
+    if float(value).is_integer():
+        n = int(value)
+        return list({str(n), f"{n:,}", f"{n:,}".replace(",", ".")})
+    text = f"{value:.4f}".rstrip("0")
+    return [text, text.replace(".", ",")]
+
+
+def number_in_text(value: float, text: str) -> bool:
+    """True when the number is written in the text, in either Indonesian or English digit grouping."""
+    return any(re.search(rf"(?<![\d.,]){re.escape(form)}(?![.,]?\d)", text) for form in _number_forms(value))
+
+
+def verify_chart_sources(markdown: str, source_text: str) -> tuple[str, int]:
+    """Relabel as an estimate every chart that claims a source but whose numbers are not in the sources.
+
+    Returns the document and how many charts were relabelled.
+    """
+    relabelled = 0
+
+    def check(match: re.Match) -> str:
+        nonlocal relabelled
+        body = match.group(1)
+        raw = body.strip().removeprefix("```chart").removesuffix("```").strip()
+        try:
+            spec = json.loads(raw)
+            values = [float(v) for v in spec["values"]]
+        except (ValueError, TypeError, KeyError):
+            return body  # malformed: the renderer drops it anyway
+        if str(spec.get("source", "")).lower() not in _CLAIMS_SOURCE:
+            return body
+        if source_text and all(number_in_text(v, source_text) for v in values):
+            return body
+        relabelled += 1
+        spec["source"] = "perkiraan"
+        return "```chart\n" + json.dumps(spec, ensure_ascii=False) + "\n```"
+
+    return _CHART_BLOCK.sub(check, markdown), relabelled
+
+
+def cite_sources(markdown: str, sources: list[WebSource], today: date) -> tuple[str, list[WebSource]]:
+    """Renumber the [n] citations in reading order and append a reference list of the cited sources only.
+
+    Any reference list the model wrote itself is discarded: titles and links come from the search
+    results, never from the model's memory. Returns the document and the sources it cites.
+    """
+    markdown = _REFERENCES_HEADING.sub("", markdown).rstrip()
+    order: list[int] = []
+
+    def renumber(match: re.Match) -> str:
+        numbers = [int(n) for n in re.split(r"\s*[,;]\s*", match.group(1))]
+        if not all(1 <= n <= len(sources) for n in numbers):
+            return match.group(0)  # not a citation of ours, e.g. a year in brackets
+        for n in numbers:
+            if n not in order:
+                order.append(n)
+        return "[" + ", ".join(str(order.index(n) + 1) for n in numbers) + "]"
+
+    # Chart blocks hold JSON arrays such as [12, 8, 5]; those are not citations.
+    parts = _CHART_BLOCK.split(markdown)
+    markdown = "".join(part if part.startswith("```chart") else _CITATION.sub(renumber, part) for part in parts)
+
+    cited = [sources[n - 1] for n in order]
+    if cited:
+        entries = "\n".join(
+            f"{i}. {s.title.replace('|', '-')}. {s.site}. {s.url} (diakses {long_date(today)})." for i, s in enumerate(cited, start=1)
+        )
+        markdown += f"\n\n## Daftar Pustaka\n\n{entries}"
+    return markdown, cited
